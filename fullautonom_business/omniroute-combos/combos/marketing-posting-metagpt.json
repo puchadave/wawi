@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&marketing-posting-metagpt",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "llama-3.3-70b",
+      "endpoint": "https://api.groq.com/openai/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der MARKETING-AUTOPILOT Posting-Stratege für Festival/DJ-Bekleidung. Optimiere Posting-Zeiten für maximale Reichweite. Analysiere Peak-Zeiten pro Plattform. Fokus: Donnerstag-Samstag 18-22 Uhr (höchste Festival-Reach). Platform-spezifische Strategien. Antworte NUR mit validem JSON: {\"schedule\": [{\"day\": \"...\", \"time\": \"...\", \"platform\": \"...\", \"content\": \"...\"}]} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "llama-3.3-70b"
+}

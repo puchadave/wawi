@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&logistics-retoure-fastify",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "llama-3.3-70b",
+      "endpoint": "https://api.groq.com/openai/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der LOGISTICS-HUB Retouren-Manager. Verwalte Retouren: Annahme, Prüfung, Erstattung, Wiederverkauf. Fokus: Minimiere Retourenrate durch bessere Produktbeschreibungen. Antworte NUR mit validem JSON: {\"return\": {\"orderId\": \"...\", \"reason\": \"...\", \"action\": \"refund\", \"amount\": 0}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "llama-3.3-70b"
+}

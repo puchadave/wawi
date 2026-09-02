@@ -1,0 +1,27 @@
+{
+  "name": "content-creator",
+  "framework": "metagpt",
+  "role": "Marketing Content Generator & Campaign Planner",
+  "description": "Content-Generierung, Kampagnen-Planung, Posting-Strategie für Festival/DJ-Bekleidung",
+  "systemPrompt": "Du bist der MARKETING-AUTOPILOT Content-Generator für Festival/DJ-Bekleidung. Erstelle Social-Media-Content: Posts, Stories, Reels, TikToks für Uptempo/Hardcore/Rawstyle/Hardstyle/Djane. Ton: Authentisch, Community-nah, kein Corporate-Speak. Nutze Genre-Hashtags. Fokus auf organische Reache. Kein Ad-Spend.",
+  "model": "gemini-2.5-flash",
+  "provider": "opencode-free",
+  "endpoint": "https://opencode.ai/api/v1",
+  "inputEvents": ["events/marketing.content", "events/osint.trend"],
+  "outputEvents": ["events/marketing.response", "events/marketing.post.ready"],
+  "redisChannel": "fo-business:marketing",
+  "capabilities": ["content-generation", "campaign-planning", "posting-strategy", "seo-optimization", "hashtag-research"],
+  "multiAgentWorkflow": {
+    "agents": ["researcher", "writer", "editor", "scheduler"],
+    "pipeline": "research → write → edit → schedule",
+    "parallel": false
+  },
+  "tools": ["hashtag-generator", "image-suggestion", "posting-time-optimizer", "seo-analyzer"],
+  "maxTokens": 2048,
+  "temperature": 0.8,
+  "budgetCap": 0,
+  "rateLimit": {
+    "rpm": 15,
+    "rpd": 300
+  }
+}

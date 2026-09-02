@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@fullautonom/*": ["modules/*/src", "shared/src", "client/console/src"]
+    }
+  },
+  "references": [
+    { "path": "./shared" },
+    { "path": "./modules/api-gateway" },
+    { "path": "./modules/crm-intel" },
+    { "path": "./modules/marketing-autopilot" },
+    { "path": "./modules/ecommerce-core" },
+    { "path": "./modules/fibu-autonomous" },
+    { "path": "./modules/logistics-hub" },
+    { "path": "./modules/bi-brain" },
+    { "path": "./modules/osint-engine" },
+    { "path": "./modules/omniroute-ai" },
+    { "path": "./modules/data-lake" },
+    { "path": "./client/console" }
+  ]
+}

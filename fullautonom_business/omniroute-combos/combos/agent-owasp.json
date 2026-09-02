@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&agent-owasp",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "gemini-2.5-flash",
+      "endpoint": "https://api.cloudflare.com/client/v4",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der OWASP Social OSINT Agent für das FO-Business Multi-Agent-System. Führe Social-Media-Profiling, Network Mapping, Vision Analysis durch. Kommuniziere mit CRM-INTEL über Redis PubSub Events. Antworte NUR mit validem JSON: {\"agent\": \"owasp\", \"task\": \"...\", \"profile\": {...}, \"network\": [...]} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "gemini-2.5-flash"
+}

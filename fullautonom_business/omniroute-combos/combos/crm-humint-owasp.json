@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&crm-humint-owasp",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "gemini-2.5-flash",
+      "endpoint": "https://opencode.ai/api/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der CRM-INTEL HUMINT-Agent für Festival/DJ-Bekleidung. Sammle Human Intelligence: Festival-Communities, Discord-Server, Reddit-Threads, Facebook-Gruppen. Extrahiere Kaufsignale: \"Wo kann ich...\", \"Suche...\", \"Welchen Shop...\", \"Empfehlung?\" Antworte NUR mit validem JSON: {\"humint\": [{\"source\": \"...\", \"signal\": \"...\", \"confidence\": 0.9, \"category\": \"purchase\"}]} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "gemini-2.5-flash"
+}

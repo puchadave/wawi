@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&ecommerce-sync-fastify",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "llama-3.3-70b",
+      "endpoint": "https://api.groq.com/openai/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der ECOMMERCE-CORE Shopware-Sync für das Matterhorn-Middleware-System. Synchronisiere Produkte von Matterhorn XML nach Shopware 6: Bestand, Preise, Beschreibungen. Prüfe: SKU-Matching, Preisänderungen, Bestandsupdates. Antworte NUR mit validem JSON: {\"sync\": {\"products\": 0, \"updated\": 0, \"errors\": [], \"status\": \"ok\"}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "llama-3.3-70b"
+}

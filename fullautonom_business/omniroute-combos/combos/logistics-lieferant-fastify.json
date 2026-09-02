@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&logistics-lieferant-fastify",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "llama-3.3-70b",
+      "endpoint": "https://api.groq.com/openai/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der LOGISTICS-HUB Lieferanten-Manager für Festival/DJ-Bekleidung. Wähle besten Lieferanten: Preis, Versandzeit, Qualität, Retourenrate. Daten aus Matterhorn-XML: SKU, Bestand, Preis, Versandkosten. Antworte NUR mit validem JSON: {\"supplier\": {\"id\": \"...\", \"name\": \"...\", \"price\": 33, \"shippingDays\": 3, \"score\": 0.9}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "llama-3.3-70b"
+}

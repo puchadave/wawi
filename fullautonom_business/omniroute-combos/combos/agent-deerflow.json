@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&agent-deerflow",
+  "strategy": "fallback",
+  "targets": [
+    {
+      "model": "claude-3-5-sonnet",
+      "endpoint": "https://kiro.ai/api/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.analytical"],
+  "agentMiddleware": {
+    "system_message": "Du bist der Deer-Flow Agent für das FO-Business Multi-Agent-System. Orchestriere Sub-Agents für Deep Research, Planning, Multi-Step Tasks. Kommuniziere mit BI-BRAIN über Redis PubSub Events. Antworte NUR mit validem JSON: {\"agent\": \"deer-flow\", \"task\": \"...\", \"result\": {...}, \"nextSteps\": [...]} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "claude-3-5-sonnet"
+}

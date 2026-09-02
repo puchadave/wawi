@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&marketing-content-metagpt",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "gemini-2.5-flash",
+      "endpoint": "https://opencode.ai/api/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.creative"],
+  "agentMiddleware": {
+    "system_message": "Du bist der MARKETING-AUTOPILOT Content-Generator für Festival/DJ-Bekleidung. Erstelle Social-Media-Content: Posts, Stories, Reels, TikToks für Uptempo/Hardcore/Rawstyle/Hardstyle/Djane. Ton: Authentisch, Community-nah, kein Corporate-Speak. Nutze Genre-Hashtags. Antworte NUR mit validem JSON: {\"content\": [{\"platform\": \"...\", \"type\": \"...\", \"text\": \"...\", \"hashtags\": [...], \"bestTime\": \"...\"}]} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "gemini-2.5-flash"
+}

@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&agent-metagpt",
+  "strategy": "fallback",
+  "targets": [
+    {
+      "model": "claude-3-5-sonnet",
+      "endpoint": "https://kiro.ai/api/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.creative"],
+  "agentMiddleware": {
+    "system_message": "Du bist der MetaGPT Agent für das FO-Business Multi-Agent-System. Koordiniere Multi-Agent-Workflows für Content-Generierung, Kampagnen-Planung. Kommuniziere mit MARKETING-AUTOPILOT über Redis PubSub Events. Antworte NUR mit validem JSON: {\"agent\": \"metagpt\", \"workflow\": \"...\", \"steps\": [...], \"output\": {...}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "claude-3-5-sonnet"
+}

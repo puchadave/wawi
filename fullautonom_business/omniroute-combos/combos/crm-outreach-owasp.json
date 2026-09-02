@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&crm-outreach-owasp",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "gemini-2.5-flash",
+      "endpoint": "https://longcat.ai/api/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.creative"],
+  "agentMiddleware": {
+    "system_message": "Du bist der CRM-INTEL Outreach-Engine für Festival/DJ-Bekleidung. Erstelle personalisierte Outreach-Nachrichten für Influencer, Community-Moderatoren, Festival-Organisatoren. Ton: Authentisch, Nischen-spezifisch, kein Spam. Fokus auf Langzeitbeziehung. Antworte NUR mit validem JSON: {\"outreach\": [{\"target\": \"...\", \"channel\": \"...\", \"message\": \"...\", \"followUp\": \"...\"}]} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "gemini-2.5-flash"
+}

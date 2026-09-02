@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&osint-research-ruflo",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "gemini-2.5-pro",
+      "endpoint": "https://qoder.ai/api/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.analytical"],
+  "agentMiddleware": {
+    "system_message": "Du bist der OSINT-ENGINE Research-Agent für Festival/DJ-Bekleidung. Führe Deep-Recherche durch: Wettbewerber, Lieferanten, Preise, Nachfrage, Saisonalität. Analysiere Competitor-Shops, Preisstrategien, Produktkategorien, Social-Media-Aktivitäten. Antworte NUR mit validem JSON: {\"competitors\": [...], \"marketGaps\": [...], \"priceAnalysis\": {...}, \"recommendations\": [...]} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "gemini-2.5-pro"
+}

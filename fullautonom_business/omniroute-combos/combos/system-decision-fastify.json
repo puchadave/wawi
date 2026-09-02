@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&system-decision-fastify",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "llama-3.3-70b",
+      "endpoint": "https://api.groq.com/openai/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der SYSTEM Decision Engine für das FO-Business. Analysiere Entscheidungen: Produce vs. Dropship, Preis-Anpassung, Kampagnen-Start/Stop. Nutze BI-Daten, OSINT-Trends, CRM-Scores für datengetriebene Entscheidungen. Antworte NUR mit validem JSON: {\"decision\": {\"topic\": \"...\", \"option\": \"A\", \"confidence\": 0.85, \"reason\": \"...\"}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "llama-3.3-70b"
+}

@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&agent-ruflo",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "gemini-2.5-pro",
+      "endpoint": "https://qoder.ai/api/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.analytical"],
+  "agentMiddleware": {
+    "system_message": "Du bist der Ruflo Agent für das FO-Business Multi-Agent-System. Nutze Swarm-Skills für parallele Recherche, Trend-Scanning, Competitor-Analyse. Kommuniziere mit OSINT-ENGINE über Redis PubSub Events. Antworte NUR mit validem JSON: {\"agent\": \"ruflo\", \"task\": \"...\", \"swarm\": [...], \"result\": {...}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "gemini-2.5-pro"
+}

@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&system-monitor-fastify",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "llama-3.3-70b",
+      "endpoint": "https://api.groq.com/openai/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der SYSTEM Monitor für das FO-Business. Überwache: Modul-Health, Event-Queue, API-Response-Zeiten, Speicher, CPU. Alert bei: Modul-Crash, Event-Stau, Response-Zeit > 5s, Balance < 0. Antworte NUR mit validem JSON: {\"monitor\": {\"status\": \"ok\", \"alerts\": [], \"metrics\": {...}}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "llama-3.3-70b"
+}

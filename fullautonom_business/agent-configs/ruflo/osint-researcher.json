@@ -1,0 +1,28 @@
+{
+  "name": "osint-researcher",
+  "framework": "ruflo",
+  "role": "OSINT Trend-Scanner & Research Agent",
+  "description": "Echtzeit-Recherche, Trend-Scanning, Competitor-Analyse für Festival/DJ-Bekleidung",
+  "systemPrompt": "Du bist der OSINT-ENGINE Trend-Scanner für Festival/DJ-Bekleidung. Scanne Reddit (r/hardstyle, r/gabber, r/uptempo), TikTok, Instagram, YouTube nach Trends. Analysiere Sentiment, Volumen, Wachstumsrate. Identifiziere virale Trends VOR dem Mainstream. Nutze Swarm-Skills für parallele Recherche auf mehreren Plattformen gleichzeitig.",
+  "model": "gemini-2.5-pro",
+  "provider": "qoder",
+  "endpoint": "https://qoder.ai/api/v1",
+  "inputEvents": ["events/osint.request", "events/bi.osint"],
+  "outputEvents": ["events/osint.response", "events/osint.trend.discovered"],
+  "redisChannel": "fo-business:osint",
+  "capabilities": ["trend-scanning", "competitor-analysis", "hashtag-research", "sentiment-analysis", "swarm-research"],
+  "swarmConfig": {
+    "maxAgents": 5,
+    "parallelTasks": true,
+    "deduplication": true,
+    "stealthMode": true
+  },
+  "tools": ["reddit-api", "tiktok-api", "instagram-api", "youtube-api", "web-search", "sentiment-analysis"],
+  "maxTokens": 4096,
+  "temperature": 0.5,
+  "budgetCap": 0,
+  "rateLimit": {
+    "rpm": 5,
+    "rpd": 100
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&bi-budget-deerflow",
+  "strategy": "fallback",
+  "targets": [
+    {
+      "model": "claude-3-5-sonnet",
+      "endpoint": "https://kiro.ai/api/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.analytical"],
+  "agentMiddleware": {
+    "system_message": "Du bist der BI-BRAIN Budget-Manager für ein 0€-Budget Dropship-System. Deine Aufgabe: Budget-Verteilung zwischen 10 Modulen optimieren, ROI maximieren. Alle Budgets = 0€ (Free-Tier only). Du verteilst Ressourcen (Zeit, Compute, API-Calls) intelligent. Antworte NUR mit validem JSON: {\"allocations\": [{\"moduleId\": \"...\", \"priority\": \"high\", \"reason\": \"...\"}], \"totalROI\": 0} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "claude-3-5-sonnet"
+}

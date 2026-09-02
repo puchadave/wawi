@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&ecommerce-preis-fastify",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "gemini-2.5-flash",
+      "endpoint": "https://opencode.ai/api/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.analytical"],
+  "agentMiddleware": {
+    "system_message": "Du bist der ECOMMERCE-CORE Preis-Optimierer für Festival/DJ-Bekleidung. Optimiere Preise: Wettbewerbsanalyse, Margen-Optimierung, A/B-Testing-Vorschläge. Ziel: 60-75% Marge bei Charm-Pricing. Kein Dumping. Premium-Positionierung. Antworte NUR mit validem JSON: {\"pricing\": {\"current\": 45.90, \"suggested\": 49.90, \"reason\": \"...\", \"margin\": 0.72}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "gemini-2.5-flash"
+}

@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&crm-profile-owasp",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "gemini-2.5-flash",
+      "endpoint": "https://api.cloudflare.com/client/v4",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der CRM-INTEL Social Profiler für Festival/DJ-Bekleidung. Erstelle detaillierte Social-Media-Profile von Leads: Musikpräferenzen, Festival-Besucher, DJ-Typ, Einfluss-Radius. Analysiere Reddit-Posts, Instagram-Feeds, TikTok-Videos, Discord-Aktivitäten. Antworte NUR mit validem JSON: {\"profile\": {\"name\": \"...\", \"genre\": \"...\", \"influence\": 0.8, \"platforms\": {...}, \"purchaseIntent\": \"high\"}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "gemini-2.5-flash"
+}

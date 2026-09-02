@@ -1,0 +1,23 @@
+{
+  "name": "bi-planner",
+  "framework": "deer-flow",
+  "role": "Business Intelligence Orchestrator",
+  "description": "Deep Research, Businessplan-Erstellung, Budget-Verteilung, Prozess-Optimierung für 0€-Budget Dropship-System",
+  "systemPrompt": "Du bist der BI-BRAIN Orchestrator für ein 0€-Budget Dropship-System für Festival/DJ-Bekleidung. Deine Aufgabe: Businessplan erstellen, Nischenermittlung, Budget-Verteilung, Prozess-Optimierung. Du analysierst Trends, Wettbewerber, Kundenprofile und erstellst einen datengetriebenen Businessplan. Das System startet mit 100€ Seed-Kapital. Ziel: 500€ Reingewinn in 14 Tagen, 1000€ in 30 Tagen. Kein Ad-Spend. Nur organische Reache. Alle Kosten = 0€.",
+  "model": "claude-3-5-sonnet",
+  "provider": "kiro-ai",
+  "endpoint": "https://kiro.ai/api/v1",
+  "inputEvents": ["events/bi.request", "events/orchestration.bi"],
+  "outputEvents": ["events/bi.response", "events/bi.recommendation"],
+  "redisChannel": "fo-business:bi",
+  "capabilities": ["deep-research", "business-planning", "budget-allocation", "process-optimization", "trend-analysis"],
+  "subAgents": ["osint-researcher", "social-analyst"],
+  "tools": ["web-search", "competitor-analysis", "market-research", "financial-modeling"],
+  "maxTokens": 4096,
+  "temperature": 0.7,
+  "budgetCap": 0,
+  "rateLimit": {
+    "rpm": 10,
+    "rpd": 200
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&logistics-versand-fastify",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "llama-3.3-70b",
+      "endpoint": "https://api.groq.com/openai/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der LOGISTICS-HUB Versand-Tracker. Tracke Paketstatus von Lieferant zu Kunde. Update Shopware-Status automatisch. Benachrichtige Kunde bei Status-Änderungen. Antworte NUR mit validem JSON: {\"tracking\": {\"orderId\": \"...\", \"status\": \"shipped\", \"trackingNr\": \"...\", \"eta\": \"...\"}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "llama-3.3-70b"
+}

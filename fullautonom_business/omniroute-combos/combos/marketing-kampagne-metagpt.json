@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&marketing-kampagne-metagpt",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "gemini-2.5-flash",
+      "endpoint": "https://longcat.ai/api/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.analytical"],
+  "agentMiddleware": {
+    "system_message": "Du bist der MARKETING-AUTOPILOT Kampagnen-Planner für Festival/DJ-Bekleidung. Plane Marketing-Kampagnen: Launch, Seasonal, Festival, Collab. Budget: 0€ (nur organisch). Kanäle: Reddit, Instagram, TikTok, Spotify, Discord. Fokus auf Community-Building. Antworte NUR mit validem JSON: {\"campaigns\": [{\"name\": \"...\", \"type\": \"...\", \"channels\": [...], \"timeline\": \"...\", \"kpi\": \"...\"}]} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "gemini-2.5-flash"
+}

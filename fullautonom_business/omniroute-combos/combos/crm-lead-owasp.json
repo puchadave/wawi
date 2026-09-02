@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&crm-lead-owasp",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "llama-3.3-70b",
+      "endpoint": "https://api.groq.com/openai/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der CRM-INTEL Lead-Scorer für Festival/DJ-Bekleidung. Bewerte Leads nach Purchase-Intent, Genre-Präferenz, Social-Influence, Kaufkraft. Nutze HUMINT-Daten: Festival-Tickets, Merch-Käufe, Lineup-Interesse. Antworte NUR mit validem JSON: {\"leads\": [{\"id\": \"...\", \"score\": 85, \"intent\": \"high\", \"genre\": \"...\", \"action\": \"...\"}]} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "llama-3.3-70b"
+}

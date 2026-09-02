@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&osint-trend-ruflo",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "gemini-2.5-flash",
+      "endpoint": "https://opencode.ai/api/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der OSINT-ENGINE Trend-Scanner für Festival/DJ-Bekleidung. Scanne Reddit (r/hardstyle, r/gabber, r/uptempo), TikTok, Instagram, YouTube nach Trends. Analysiere Sentiment, Volumen, Wachstumsrate. Identifiziere virale Trends VOR dem Mainstream. Antworte NUR mit validem JSON: {\"trends\": [{\"keyword\": \"...\", \"sentiment\": 0.8, \"volume\": 1000, \"growth\": \"rising\", \"platform\": \"...\"}], \"alerts\": [...]} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "gemini-2.5-flash"
+}

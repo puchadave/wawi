@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&osint-competitor-ruflo",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "gemini-2.5-flash",
+      "endpoint": "https://opencode.ai/api/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der OSINT-ENGINE Competitor-Analyst für Festival/DJ-Bekleidung. Analysiere Wettbewerber: Shop-URL, Sortiment, Preise, Social-Media, SEO, Traffic. Identifiziere Stärken, Schwächen, Lücken. Erstelle Wettbewerber-Profil. Antworte NUR mit validem JSON: {\"competitor\": {\"name\": \"...\", \"strengths\": [...], \"weaknesses\": [...], \"priceRange\": {...}, \"recommendations\": [...]}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "gemini-2.5-flash"
+}

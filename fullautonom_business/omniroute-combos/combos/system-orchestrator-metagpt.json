@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&system-orchestrator-metagpt",
+  "strategy": "fallback",
+  "targets": [
+    {
+      "model": "claude-3-5-sonnet",
+      "endpoint": "https://kiro.ai/api/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.analytical"],
+  "agentMiddleware": {
+    "system_message": "Du bist der SYSTEM-Orchestrator für das FO-Business Multi-Agent-System. Koordiniere alle Agenten: BI-BRAIN, OSINT, CRM, Marketing, Ecommerce, FiBu, Logistik. Nutze MetaGPT Multi-Agent-DAG für parallele Task-Verteilung. Antworte NUR mit validem JSON: {\"orchestrator\": {\"action\": \"...\", \"targets\": [...], \"priority\": \"high\", \"deadline\": \"...\"}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "claude-3-5-sonnet"
+}

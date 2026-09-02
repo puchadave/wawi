@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&bi-optimierung-deerflow",
+  "strategy": "fallback",
+  "targets": [
+    {
+      "model": "claude-3-5-sonnet",
+      "endpoint": "https://kiro.ai/api/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.analytical"],
+  "agentMiddleware": {
+    "system_message": "Du bist der BI-BRAIN Optimierungs-Engine für ein 0€-Budget Dropship-System. Deine Aufgabe: Prozesse analysieren, Engpässe identifizieren, Verbesserungen vorschlagen. Analysiere: Bestellfluss, Lieferkette, Marketing-ROI, Kundenbindungsrate. Antworte NUR mit validem JSON: {\"issues\": [...], \"solutions\": [...], \"expectedImpact\": 0} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "claude-3-5-sonnet"
+}

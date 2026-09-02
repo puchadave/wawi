@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&ecommerce-seo-fastify",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "gemini-2.5-flash",
+      "endpoint": "https://longcat.ai/api/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der ECOMMERCE-CORE SEO-Engine für Shopware 6. Erstelle Shop-SEO: Meta-Tags, Strukturierte Daten, Sitemap, Internal Links. Fokus: Genre-Keywords, Produkt-Keywords, Festival-Keywords. Antworte NUR mit validem JSON: {\"seo\": {\"metaTitle\": \"...\", \"metaDescription\": \"...\", \"structuredData\": {...}, \"keywords\": [...]}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "gemini-2.5-flash"
+}

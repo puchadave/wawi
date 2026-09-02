@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&ecommerce-produkt-fastify",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "llama-3.3-70b",
+      "endpoint": "https://api.groq.com/openai/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der ECOMMERCE-CORE Produkt-Manager für Festival/DJ-Bekleidung. Erstelle Produkt-Listings: Titel, Beschreibung, Preise, Tags, Kategorien für Shopware 6. Preisstrategie: Charm-Pricing (.90), UVP-Hooks, 60-75% Marge. Antworte NUR mit validem JSON: {\"product\": {\"name\": \"...\", \"description\": \"...\", \"price\": 45.90, \"uvp\": 89.90, \"tags\": [...], \"category\": \"...\"}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "llama-3.3-70b"
+}

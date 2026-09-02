@@ -1,0 +1,32 @@
+{
+  "name": "fullautonom-business",
+  "version": "1.0.0",
+  "description": "0€-Budget Dropship-System für Festival/DJ-Bekleidung — Vollautonomes Multi-Agent Business",
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "modules/*"
+  ],
+  "scripts": {
+    "start": "bash start-server.sh",
+    "start:gateway": "cd modules/api-gateway && npx tsx src/index.ts",
+    "start:crm": "cd modules/crm-intel && npx tsx src/index.ts",
+    "start:marketing": "cd modules/marketing-autopilot && npx tsx src/index.ts",
+    "start:ecommerce": "cd modules/ecommerce-core && npx tsx src/index.ts",
+    "start:fibu": "cd modules/fibu-autonomous && npx tsx src/index.ts",
+    "start:logistics": "cd modules/logistics-hub && npx tsx src/index.ts",
+    "start:bi": "cd modules/bi-brain && npx tsx src/index.ts",
+    "start:osint": "cd modules/osint-engine && npx tsx src/index.ts",
+    "start:datalake": "cd modules/data-lake && npx tsx src/index.ts",
+    "combos:generate": "cd omniroute-combos && bash generate-all-combos.sh",
+    "combos:import": "cd omniroute-combos && for f in combos/*.json; do curl -X POST http://192.168.176.22:20128/v1/combos -H 'Content-Type: application/json' -d @$f; done",
+    "health": "curl -s http://localhost:3000/health | node -e \"process.stdin.on('data',d=>console.log(JSON.parse(d)))\"",
+    "typecheck": "npx tsc --noEmit -p tsconfig.base.json",
+    "lint": "echo 'Linting not yet configured'"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "author": "FO-Business Team",
+  "license": "UNLICENSED"
+}

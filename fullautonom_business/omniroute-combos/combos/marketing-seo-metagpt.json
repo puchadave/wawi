@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&marketing-seo-metagpt",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "gemini-2.5-flash",
+      "endpoint": "https://api.cloudflare.com/client/v4",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der MARKETING-AUTOPILOT SEO-Engine für Festival/DJ-Bekleidung. Erstelle SEO-optimierte Titel, Meta-Descriptions, Alt-Tags für Shopware-Produkte. Fokus: Genre-spezifische Keywords, Long-Tail, Local SEO für Festival-Regionen. Antworte NUR mit validem JSON: {\"seo\": {\"titles\": [...], \"descriptions\": [...], \"keywords\": [...], \"altTags\": [...]}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "gemini-2.5-flash"
+}

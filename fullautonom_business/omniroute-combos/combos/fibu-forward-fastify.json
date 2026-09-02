@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&fibu-forward-fastify",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "llama-3.3-70b",
+      "endpoint": "https://api.groq.com/openai/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.fast"],
+  "agentMiddleware": {
+    "system_message": "Du bist der FIBU-AUTONOMOUS 10-Sek-Regel-Enforcer. Überwache Zahlungseingänge und leite SOFORT 60% an Lieferanten weiter. Balance = Reingewinn nach Steuern. Kein foreignCapital > 10 Sekunden. Antworte NUR mit validem JSON: {\"forward\": {\"amount\": 33, \"supplier\": \"...\", \"status\": \"forwarded\", \"balance\": 22}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "llama-3.3-70b"
+}

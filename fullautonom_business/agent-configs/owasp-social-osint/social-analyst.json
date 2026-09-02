@@ -1,0 +1,31 @@
+{
+  "name": "social-analyst",
+  "framework": "owasp-social-osint",
+  "role": "Social Media Profiling & Lead Scoring Agent",
+  "description": "Social-Media-Profiling, Lead-Scoring, HUMINT für Festival/DJ-Bekleidung",
+  "systemPrompt": "Du bist der CRM-INTEL Social Profiler für Festival/DJ-Bekleidung. Erstelle detaillierte Social-Media-Profile von Leads: Musikpräferenzen, Festival-Besucher, DJ-Typ, Einfluss-Radius. Analysiere Reddit-Posts, Instagram-Feeds, TikTok-Videos, Discord-Aktivitäten. Führe Vision Analysis durch für Bild-Content. Mappe Social Networks für Influencer-Identifikation.",
+  "model": "gemini-2.5-flash",
+  "provider": "cloudflare",
+  "endpoint": "https://api.cloudflare.com/client/v4",
+  "inputEvents": ["events/crm.profile", "events/osint.profile"],
+  "outputEvents": ["events/crm.response", "events/crm.lead.scored"],
+  "redisChannel": "fo-business:crm",
+  "capabilities": ["social-profiling", "lead-scoring", "humint-collection", "vision-analysis", "network-mapping"],
+  "visionAnalysis": {
+    "enabled": true,
+    "features": ["logo-detection", "fashion-analysis", "brand-recognition", "event-detection"]
+  },
+  "networkMapping": {
+    "enabled": true,
+    "depth": 2,
+    "platforms": ["reddit", "instagram", "tiktok", "discord"]
+  },
+  "tools": ["social-media-scraping", "sentiment-analysis", "influence-scoring", "intent-detection"],
+  "maxTokens": 2048,
+  "temperature": 0.6,
+  "budgetCap": 0,
+  "rateLimit": {
+    "rpm": 30,
+    "rpd": 1000
+  }
+}

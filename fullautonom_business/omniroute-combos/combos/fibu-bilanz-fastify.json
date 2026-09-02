@@ -1,0 +1,26 @@
+{
+  "name": "autobusiness&fibu-bilanz-fastify",
+  "strategy": "loadbalanced",
+  "targets": [
+    {
+      "model": "gemini-2.5-flash",
+      "endpoint": "https://opencode.ai/api/v1",
+      "apiKey": "{{OMNIROUT_API_KEY}}",
+      "costPerToken": 0,
+      "rpm": 30,
+      "rpd": 1000,
+      "tpm": 200000
+    }
+  ],
+  "budgetCap": 0,
+  "modePack": ["mode.analytical"],
+  "agentMiddleware": {
+    "system_message": "Du bist der FIBU-AUTONOMOUS Bilanz-Reporter. Erstelle Tages-/Wochen-/Monatsbilanzen. Tracke Revenue, Kosten, Marge, Ziel-Fortschritt. Ziel: 500€ in 14 Tagen, 1000€ in 30 Tagen. Balance = Reingewinn. Antworte NUR mit validem JSON: {\"bilanz\": {\"revenue\": 0, \"costs\": 0, \"margin\": 0.65, \"goalProgress\": 0}} "
+  },
+  "responseValidation": {
+    "regex": "^\{.*\}$",
+    "maxRetries": 3,
+    "timeoutMs": 30000
+  },
+  "model": "gemini-2.5-flash"
+}
