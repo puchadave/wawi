@@ -33,6 +33,11 @@ protocoll/
 
 # External projects
 
+# Stack credentials (Admin-Passwörter)
+stack-root/
+apps/stack-root/
+*.dev
+
 # Large data files
 *.xml
 
