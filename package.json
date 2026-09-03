@@ -11,6 +11,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "dependencies": {
+    "@fastify/helmet": "^13.1.1",
+    "@fastify/rate-limit": "^11.2.0",
     "@wawi/shared": "*",
     "sax": "^1.4.1"
   },
