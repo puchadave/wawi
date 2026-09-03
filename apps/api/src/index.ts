@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
 import helmet from '@fastify/helmet';
+import cookie from '@fastify/cookie';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
@@ -11,9 +12,11 @@ import { client, db } from './db.js';
 import { parseMatterhornXmlStream } from './xmlParser.js';
 import { upsertProduct } from './importer.js';
 import { products } from './schema.js';
-import { eq } from 'drizzle-orm';
 import { pricingRoutes } from './routes/pricing.js';
 import { productRoutes } from './routes/products.js';
+import { authRoutes } from './routes/auth.js';
+import { adminRoutes } from './routes/admin.js';
+import { bootstrapAdmin } from './auth/bootstrap.js';
 import { stockQueue, priceQueue, syncQueue, mediaQueue, feeQueue, syncWorker, mediaWorker, feeWorker } from './queues.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -23,6 +26,7 @@ dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
 const server = Fastify({
   logger: true,
+  trustProxy: true,
 });
 
 await server.register(helmet, {
@@ -42,11 +46,21 @@ await server.register(helmet, {
   xssFilter: true,
 });
 
+await server.register(cookie, {
+  hook: 'onRequest',
+  parseOptions: {
+    path: '/',
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+  },
+});
+
 await server.register(rateLimit, {
   max: 100,
   timeWindow: '1 minute',
   keyGenerator: (request) => {
-    return request.headers['x-forwarded-for']?.toString() || 
+    return request.headers['x-forwarded-for']?.toString() ||
            request.headers['x-real-ip']?.toString() ||
            request.ip;
   },
@@ -77,6 +91,8 @@ await server.register(multipart, {
   },
 });
 
+await server.register(authRoutes);
+await server.register(adminRoutes);
 await server.register(pricingRoutes);
 await server.register(productRoutes);
 
@@ -150,6 +166,9 @@ server.post('/api/import/upload', async (request, reply) => {
 
 const start = async () => {
   try {
+    console.log('🔧 Running bootstrap (admin, roles, permissions)...');
+    await bootstrapAdmin();
+
     const port = Number(process.env.PORT) || 3000;
     const host = process.env.HOST || '0.0.0.0';
     await server.listen({ port, host });

@@ -1,5 +1,6 @@
 import { db } from '../db.js';
 import { securityAuditLog } from '../schema.js';
+import { eq, gte, lte, and, desc } from 'drizzle-orm';
 
 export interface AuditLogEntry {
   userId?: string | null;
@@ -52,7 +53,6 @@ export async function getAuditLogs(filters?: {
   if (filters?.fromDate) conditions.push(gte(securityAuditLog.createdAt, filters.fromDate));
   if (filters?.toDate) conditions.push(lte(securityAuditLog.createdAt, filters.toDate));
 
-  const { gte, lte } = await import('drizzle-orm');
   const where = conditions.length ? and(...conditions) : undefined;
 
   return db.select().from(securityAuditLog)
@@ -61,5 +61,3 @@ export async function getAuditLogs(filters?: {
     .limit(filters?.limit || 100)
     .offset(filters?.offset || 0);
 }
-
-import { eq, and, gte, lte, desc } from 'drizzle-orm';

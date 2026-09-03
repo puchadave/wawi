@@ -3,9 +3,35 @@ import { clsx } from 'clsx';
 import { useUIStore } from './lib/store';
 import { ProductList } from './pages/ProductList';
 import { ProductDetail } from './pages/ProductDetail';
+import { Login } from './pages/Login';
+import { Admin } from './pages/Admin';
+import { isLoggedIn, getCurrentUser, logout } from './lib/auth';
+import { useNavigate } from 'react-router-dom';
+
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  if (!isLoggedIn()) {
+    return <Navigate to="/login" replace />;
+  }
+  return <>{children}</>;
+}
+
+function RequireAdmin({ children }: { children: React.ReactNode }) {
+  const user = getCurrentUser();
+  if (!user || (!user.roles.includes('admin') && !user.permissions.includes('admin:read'))) {
+    return <Navigate to="/" replace />;
+  }
+  return <>{children}</>;
+}
 
 function Layout() {
   const { sidebarOpen, toggleSidebar } = useUIStore();
+  const navigate = useNavigate();
+  const user = getCurrentUser();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login', { replace: true });
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -21,7 +47,7 @@ function Layout() {
             <button
               onClick={toggleSidebar}
               className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg lg:hidden"
-              aria-label="Sidebar schließen"
+              aria-label="Sidebar schliessen"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -67,18 +93,36 @@ function Layout() {
             >
               Einstellungen
             </NavLink>
+            {user?.roles.includes('admin') && (
+              <NavLink
+                to="/admin"
+                className={({ isActive }) => clsx(
+                  'block p-3 rounded-lg transition-colors',
+                  isActive ? 'bg-purple-50 text-purple-700 font-medium' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+                )}
+              >
+                Administration
+              </NavLink>
+            )}
           </nav>
 
           <div className="p-4 border-t border-gray-200">
-            <div className="text-xs text-gray-500 mb-2">System-Status</div>
-            <div className="flex items-center gap-2 text-xs">
+            {user && (
+              <div className="mb-3">
+                <div className="text-sm font-medium text-gray-900">{user.fullName || user.username}</div>
+                <div className="text-xs text-gray-500">{user.roles.join(', ')}</div>
+              </div>
+            )}
+            <div className="flex items-center gap-2 text-xs mb-2">
               <span className="w-2 h-2 rounded-full bg-green-500" />
               <span className="text-gray-500">API verbunden</span>
             </div>
-            <div className="flex items-center gap-2 text-xs mt-1">
-              <span className="w-2 h-2 rounded-full bg-green-500" />
-              <span className="text-gray-500">DB verbunden</span>
-            </div>
+            <button
+              onClick={handleLogout}
+              className="action-button danger w-full justify-center mt-2"
+            >
+              Abmelden
+            </button>
           </div>
         </div>
       </aside>
@@ -103,12 +147,14 @@ function Layout() {
 export default function App() {
   return (
     <Routes>
-      <Route element={<Layout />}>
+      <Route path="/login" element={<Login />} />
+      <Route element={<RequireAuth><Layout /></RequireAuth>}>
         <Route index element={<ProductList />} />
         <Route path="product/:id" element={<ProductList />} />
-        <Route path="pricing" element={<div className="p-8">Preisregeln werden in Phase 5 erweitert.</div>} />
-        <Route path="shipping" element={<div className="p-8">Versand & Fracht werden in Phase 5 erweitert.</div>} />
-        <Route path="settings" element={<div className="p-8">Einstellungen werden in Phase 5 erweitert.</div>} />
+        <Route path="pricing" element={<div style={{ padding: '2rem' }}>Preisregeln werden erweitert.</div>} />
+        <Route path="shipping" element={<div style={{ padding: '2rem' }}>Versand & Fracht werden erweitert.</div>} />
+        <Route path="settings" element={<div style={{ padding: '2rem' }}>Einstellungen werden erweitert.</div>} />
+        <Route path="admin" element={<RequireAdmin><Admin /></RequireAdmin>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

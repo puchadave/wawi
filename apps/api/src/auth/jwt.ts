@@ -8,11 +8,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
-const JWT_SECRET = process.env.JWT_SECRET;
-assert(JWT_SECRET, 'JWT_SECRET environment variable is required');
-assert(JWT_SECRET!.length >= 32, 'JWT_SECRET must be at least 32 characters');
-assert(!JWT_SECRET!.includes('change'), 'JWT_SECRET must not contain placeholder text');
-assert(!JWT_SECRET!.includes('dev'), 'JWT_SECRET must not contain "dev"');
+const JWT_SECRET = process.env.JWT_SECRET!;
+if (!JWT_SECRET) throw new Error('JWT_SECRET environment variable is required');
+if (JWT_SECRET.length < 32) throw new Error('JWT_SECRET must be at least 32 characters');
+if (JWT_SECRET.includes('change')) throw new Error('JWT_SECRET must not contain placeholder text');
+if (JWT_SECRET.includes('dev')) throw new Error('JWT_SECRET must not contain "dev"');
 
 const JWT_ISSUER = 'wawi-middleware';
 const JWT_AUDIENCE = 'wawi-web';
