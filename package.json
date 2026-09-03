@@ -13,5 +13,8 @@
   "dependencies": {
     "@wawi/shared": "*",
     "sax": "^1.4.1"
+  },
+  "devDependencies": {
+    "marked": "^18.0.11"
   }
 }

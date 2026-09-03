@@ -32,7 +32,6 @@ coverage/
 protocoll/
 
 # External projects
-fullautonom_business/
 
 # Large data files
 *.xml
