@@ -10,11 +10,7 @@ declare module 'fastify' {
   }
 }
 
-export interface PermissionRow {
-  permissionName: string;
-}
-
-async function loadUserPermissions(userId: string): Promise<{ roles: string[]; permissions: string[] }> {
+export async function loadUserPermissions(userId: string): Promise<{ roles: string[]; permissions: string[] }> {
   const userWithRoles = await db
     .select({
       roleName: roles.name,
@@ -31,9 +27,9 @@ async function loadUserPermissions(userId: string): Promise<{ roles: string[]; p
 
   const permRows = await db
     .select({ permissionName: permissions.name })
-    .from(rolePermissions)
+    .from(userRoles)
+    .innerJoin(rolePermissions, eq(userRoles.roleId, rolePermissions.roleId))
     .innerJoin(permissions, eq(rolePermissions.permissionId, permissions.id))
-    .innerJoin(roles, eq(rolePermissions.roleId, roles.id))
     .where(eq(userRoles.userId, userId));
 
   const uniquePerms = [...new Set(permRows.map((p) => p.permissionName))];
@@ -89,5 +85,3 @@ export function requirePermission(...requiredPermissions: string[]) {
     }
   };
 }
-
-export { loadUserPermissions };
