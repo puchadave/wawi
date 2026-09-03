@@ -4,13 +4,40 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { syncProductToShopware, type ShopwareSyncJobData } from './shopware/sync.js';
+import { strict as assert } from 'assert';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
-export const redisConnection = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', {
+const redisUrl = process.env.REDIS_URL;
+assert(redisUrl, 'REDIS_URL environment variable is required');
+
+const isProduction = process.env.NODE_ENV === 'production';
+
+export const redisConnection = new IORedis(redisUrl, {
   maxRetriesPerRequest: null,
+  enableReadyCheck: true,
+  enableOfflineQueue: true,
+  connectionName: 'wawi-middleware',
+  
+  ...(isProduction && {
+    tls: {
+      rejectUnauthorized: true,
+      minVersion: 'TLSv1.3',
+    }
+  }),
+  
+  retryStrategy: (times) => {
+    if (times > 10) {
+      console.error('Redis connection failed after 10 retries');
+      return null;
+    }
+    return Math.min(times * 100, 3000);
+  },
+  
+  lazyConnect: false,
+  keepAlive: 10000,
 });
 
 export const stockQueue = new Queue('stock-updates', { connection: redisConnection });
