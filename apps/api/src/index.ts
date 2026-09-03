@@ -1,6 +1,8 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
+import rateLimit from '@fastify/rate-limit';
+import helmet from '@fastify/helmet';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
@@ -23,17 +25,58 @@ const server = Fastify({
   logger: true,
 });
 
+await server.register(helmet, {
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+    },
+  },
+  hsts: { maxAge: 31536000, includeSubDomains: true },
+  noSniff: true,
+  xssFilter: true,
+});
+
+await server.register(rateLimit, {
+  max: 100,
+  timeWindow: '1 minute',
+  keyGenerator: (request) => {
+    return request.headers['x-forwarded-for']?.toString() || 
+           request.headers['x-real-ip']?.toString() ||
+           request.ip;
+  },
+});
+
+const allowedOrigins = process.env.NODE_ENV === 'production'
+  ? [process.env.WEB_URL!].filter(Boolean)
+  : ['http://localhost:5173', 'http://127.0.0.1:5173'];
+
 await server.register(cors, {
-  origin: process.env.WEB_URL || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Origin not allowed'), false);
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
+  credentials: true,
 });
 
 await server.register(multipart, {
   limits: {
-    fileSize: 200 * 1024 * 1024, // 200MB max for XML upload
+    fileSize: 50 * 1024 * 1024,
+    files: 1,
+    fields: 0,
   },
 });
 
-// Register API routes
 await server.register(pricingRoutes);
 await server.register(productRoutes);
 
@@ -47,14 +90,31 @@ server.get('/health', async () => {
   }
 });
 
-// Manueller Whitelist XML Upload Endpoint
+const ALLOWED_MIME_TYPES = ['application/xml', 'text/xml'];
+const ALLOWED_EXTENSIONS = ['.xml'];
+
 server.post('/api/import/upload', async (request, reply) => {
   const data = await request.file();
   if (!data) {
     return reply.status(400).send({ error: 'Keine Datei hochgeladen' });
   }
 
+  if (!ALLOWED_MIME_TYPES.includes(data.mimetype || '')) {
+    return reply.status(415).send({ error: 'Nur XML-Dateien erlaubt' });
+  }
+
+  const filename = data.filename || '';
+  const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
+  if (!ALLOWED_EXTENSIONS.includes(ext)) {
+    return reply.status(415).send({ error: 'Ungültige Dateiendung' });
+  }
+
   const tmpPath = path.resolve(__dirname, `../tmp_upload_${Date.now()}.xml`);
+  const resolvedPath = path.resolve(tmpPath);
+  if (!resolvedPath.startsWith(path.resolve(__dirname, '../'))) {
+    return reply.status(400).send({ error: 'Ungültiger Dateipfad' });
+  }
+
   const writeStream = fs.createWriteStream(tmpPath);
   await new Promise<void>((resolve, reject) => {
     data.file.pipe(writeStream);
@@ -68,10 +128,9 @@ server.post('/api/import/upload', async (request, reply) => {
   try {
     await parseMatterhornXmlStream(tmpPath, async (product) => {
       importedCount++;
-      await upsertProduct(product, true); // Mark as whitelisted
+      await upsertProduct(product, true);
     });
 
-    // Cleanup temp file
     if (fs.existsSync(tmpPath)) {
       fs.unlinkSync(tmpPath);
     }
@@ -95,9 +154,7 @@ const start = async () => {
     const host = process.env.HOST || '0.0.0.0';
     await server.listen({ port, host });
     console.log(`🚀 API Running on http://${host}:${port}`);
-
     console.log('BullMQ workers started.');
-
   } catch (err) {
     server.log.error(err);
     process.exit(1);

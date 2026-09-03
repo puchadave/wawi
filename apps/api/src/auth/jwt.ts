@@ -2,12 +2,18 @@ import jwt from 'jsonwebtoken';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import dotenv from 'dotenv';
+import { strict as assert } from 'assert';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET;
+assert(JWT_SECRET, 'JWT_SECRET environment variable is required');
+assert(JWT_SECRET!.length >= 32, 'JWT_SECRET must be at least 32 characters');
+assert(!JWT_SECRET!.includes('change'), 'JWT_SECRET must not contain placeholder text');
+assert(!JWT_SECRET!.includes('dev'), 'JWT_SECRET must not contain "dev"');
+
 const JWT_ISSUER = 'wawi-middleware';
 const JWT_AUDIENCE = 'wawi-web';
 const ACCESS_TOKEN_TTL = '15m';
@@ -47,7 +53,7 @@ export function generateRefreshToken(userId: string): string {
 
 export function verifyAccessToken(token: string): JWTPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET, {
+    return jwt.verify(token, JWT_SECRET!, {
       issuer: JWT_ISSUER,
       audience: JWT_AUDIENCE,
     }) as JWTPayload;
@@ -58,7 +64,7 @@ export function verifyAccessToken(token: string): JWTPayload | null {
 
 export function verifyRefreshToken(token: string): { sub: string; type: string } | null {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET, {
+    const decoded = jwt.verify(token, JWT_SECRET!, {
       issuer: JWT_ISSUER,
       audience: JWT_AUDIENCE,
     }) as { sub: string; type: string };
