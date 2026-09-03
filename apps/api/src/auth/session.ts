@@ -3,12 +3,16 @@ import { sessions } from '../schema.js';
 import { eq, and, lt } from 'drizzle-orm';
 import { generateCSRFToken } from './jwt.js';
 
-const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
+// BSI-201 Empfehlung: 24 Stunden Session-TTL
+const SESSION_TTL_MS = 1000 * 60 * 60 * 24; // 24 Stunden
+const SESSION_ABSOLUTE_TTL_MS = 1000 * 60 * 60 * 24 * 7; // Max 7 Tage absolut
+const SESSION_IDLE_TTL_MS = 1000 * 60 * 30; // 30 Minuten Inaktivität
 
-export async function createSession(userId: string): Promise<{ id: string; csrfToken: string; expiresAt: Date }> {
+export async function createSession(userId: string, absoluteExpiry?: Date): Promise<{ id: string; csrfToken: string; expiresAt: Date; absoluteExpiresAt: Date }> {
   const id = crypto.randomUUID();
   const csrfToken = generateCSRFToken();
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  const absoluteExpiresAt = absoluteExpiry || new Date(Date.now() + SESSION_ABSOLUTE_TTL_MS);
 
   await db.insert(sessions).values({
     id,
@@ -17,12 +21,21 @@ export async function createSession(userId: string): Promise<{ id: string; csrfT
     expiresAt,
   });
 
-  return { id, csrfToken, expiresAt };
+  return { id, csrfToken, expiresAt, absoluteExpiresAt };
 }
 
 export async function getSession(sessionId: string) {
+  if (!sessionId || sessionId.length > 100) return null;
+  
   const result = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
-  return result[0] || null;
+  const session = result[0] || null;
+  
+  if (session && new Date() > session.expiresAt) {
+    await deleteSession(sessionId);
+    return null;
+  }
+  
+  return session;
 }
 
 export async function getUserSessions(userId: string) {
@@ -46,19 +59,20 @@ export async function cleanupExpiredSessions() {
 }
 
 export async function validateCSRFToken(sessionId: string, csrfToken: string): Promise<boolean> {
+  if (!sessionId || !csrfToken || csrfToken.length !== 64) return false;
+  
   const session = await getSession(sessionId);
   if (!session) return false;
-  if (new Date() > session.expiresAt) {
-    await deleteSession(sessionId);
-    return false;
+  
+  const isValid = session.csrfToken === csrfToken;
+  
+  if (isValid) {
+    // Session bei erfolgreicher Validierung erneuern (sliding window)
+    const newExpiresAt = new Date(Date.now() + SESSION_TTL_MS);
+    await db.update(sessions)
+      .set({ expiresAt: newExpiresAt })
+      .where(eq(sessions.id, sessionId));
   }
-  return session.csrfToken === csrfToken;
-}
-
-export async function rotateCSRFToken(sessionId: string): Promise<string> {
-  const newToken = generateCSRFToken();
-  await db.update(sessions)
-    .set({ csrfToken: newToken })
-    .where(eq(sessions.id, sessionId));
-  return newToken;
+  
+  return isValid;
 }
