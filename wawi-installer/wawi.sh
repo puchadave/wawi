@@ -398,31 +398,66 @@ configure_container() {
     header "Container-Konfiguration"
 
     if [[ "$GUI" == true ]]; then
-        local form
-        form=$(whiptail --form "Container-Einstellungen:" 16 70 6 \
-            "Container-ID:" 1 1  "$CTID" 1 18 10 0 \
-            "RAM (MB):"     2 1  "$RAM"  2 18 10 0 \
-            "CPU (Kerne):"  3 1  "$CPU"  3 18 8 0 \
-            "Disk (GB):"    4 1  "$DISK" 4 18 8 0 \
-            "IP (CIDR, leer=DHCP):" 5 1 "$STATIC_IP" 5 18 18 0 \
-            "Gateway:"      6 1  "$GATEWAY" 6 18 18 0 \
-            3>&1 1>&2 2>&3) || true
+        # whiptail --form ist auf manchen PVE-Hosts nicht verfuegbar (--> "--form: unknown option")
+        # Daher: zuerst pruefen ob --form unterstuetzt wird, sonst Fallback auf sequenzielle Einzelabfragen.
+        local use_form=false
+        if whiptail --help 2>&1 | grep -q -- "--form"; then
+            use_form=true
+        fi
 
-        if [[ -n "$form" ]]; then
-            local new_ctid new_ram new_cpu new_disk new_ip new_gw
-            new_ctid=$(echo "$form" | sed -n '1p')
-            new_ram=$(echo "$form" | sed -n '2p')
-            new_cpu=$(echo "$form" | sed -n '3p')
-            new_disk=$(echo "$form" | sed -n '4p')
-            new_ip=$(echo "$form" | sed -n '5p')
-            new_gw=$(echo "$form" | sed -n '6p')
+        if [[ "$use_form" == true ]]; then
+            local form=""
+            # 3>&1 1>&2 2>&3 tauscht stdout/stderr fuer whiptail-Capture. Fehler bei unbekanntem --form
+            # wuerde sonst als CTID interpretiert ("--form: unknown option") und fuehrt zu
+            # "[!] Ungueltige CT-ID: --form: unknown option". Daher explizit Return-Code pruefen.
+            if form=$(whiptail --form "Container-Einstellungen:" 16 70 6 \
+                "Container-ID:" 1 1  "$CTID" 1 18 10 0 \
+                "RAM (MB):"     2 1  "$RAM"  2 18 10 0 \
+                "CPU (Kerne):"  3 1  "$CPU"  3 18 8 0 \
+                "Disk (GB):"    4 1  "$DISK" 4 18 8 0 \
+                "IP (CIDR, leer=DHCP):" 5 1 "$STATIC_IP" 5 18 18 0 \
+                "Gateway:"      6 1  "$GATEWAY" 6 18 18 0 \
+                3>&1 1>&2 2>&3); then
+                # Nur wenn form nicht die Fehlermeldung enthaelt
+                if [[ -n "$form" ]] && ! echo "$form" | grep -q -- "--form"; then
+                    local new_ctid new_ram new_cpu new_disk new_ip new_gw
+                    new_ctid=$(echo "$form" | sed -n '1p')
+                    new_ram=$(echo "$form" | sed -n '2p')
+                    new_cpu=$(echo "$form" | sed -n '3p')
+                    new_disk=$(echo "$form" | sed -n '4p')
+                    new_ip=$(echo "$form" | sed -n '5p')
+                    new_gw=$(echo "$form" | sed -n '6p')
 
-            [[ -n "$new_ctid" ]] && CTID="$new_ctid"
-            [[ -n "$new_ram" ]] && RAM="$new_ram"
-            [[ -n "$new_cpu" ]] && CPU="$new_cpu"
-            [[ -n "$new_disk" ]] && DISK="$new_disk"
-            [[ -n "$new_ip" ]] && STATIC_IP="$new_ip"
-            [[ -n "$new_gw" ]] && GATEWAY="$new_gw"
+                    [[ -n "$new_ctid" ]] && CTID="$new_ctid"
+                    [[ -n "$new_ram" ]] && RAM="$new_ram"
+                    [[ -n "$new_cpu" ]] && CPU="$new_cpu"
+                    [[ -n "$new_disk" ]] && DISK="$new_disk"
+                    [[ -n "$new_ip" ]] && STATIC_IP="$new_ip"
+                    [[ -n "$new_gw" ]] && GATEWAY="$new_gw"
+                else
+                    # --form lieferte Fehlermeldung statt Daten -> Fallback
+                    warn "whiptail --form fehlgeschlagen (Form-Support fehlt) - nutze Einzelfelder"
+                    use_form=false
+                fi
+            else
+                # Abbruch (ESC) oder --form nicht verfuegbar -> Fallback auf Einzelfelder
+                if [[ -z "$form" ]]; then
+                    warn "whiptail --form abgebrochen/fehlgeschlagen - nutze Einzelfelder"
+                fi
+                use_form=false
+            fi
+        fi
+
+        if [[ "$use_form" == false ]]; then
+            # Robuster Fallback: sequenzielle --inputbox Abfragen (auf jedem whiptail verfuegbar)
+            info "Container-Konfiguration (Einzelfelder, Fallback fuer fehlendes --form)..."
+            local tmp
+            tmp=$(whiptail --inputbox "Container-ID:" 8 40 "$CTID" 3>&1 1>&2 2>&3) && [[ -n "$tmp" ]] && CTID="$tmp"
+            tmp=$(whiptail --inputbox "RAM (MB):" 8 40 "$RAM" 3>&1 1>&2 2>&3) && [[ -n "$tmp" ]] && RAM="$tmp"
+            tmp=$(whiptail --inputbox "CPU (Kerne):" 8 40 "$CPU" 3>&1 1>&2 2>&3) && [[ -n "$tmp" ]] && CPU="$tmp"
+            tmp=$(whiptail --inputbox "Disk (GB):" 8 40 "$DISK" 3>&1 1>&2 2>&3) && [[ -n "$tmp" ]] && DISK="$tmp"
+            tmp=$(whiptail --inputbox "IP (CIDR, leer=DHCP):" 8 50 "$STATIC_IP" 3>&1 1>&2 2>&3) && STATIC_IP="$tmp"
+            tmp=$(whiptail --inputbox "Gateway (leer=auto):" 8 50 "$GATEWAY" 3>&1 1>&2 2>&3) && GATEWAY="$tmp"
         fi
     fi
 
@@ -513,21 +548,79 @@ create_lxc() {
     # Template-Handling: pveam update (fehlertolerant)
     info "Aktualisiere Template-Liste..."
     pveam update 2>/dev/null || warn "pveam update hatte Fehler (nicht kritisch)"
+    # Warte kurz, damit Appliance-Liste aktualisiert ist
+    sleep 1
 
-    # Neuestes System-Template suchen (Turnkeylinux-Austräge ausschließen)
+    # Neuestes System-Template suchen - robust gegen PVE-Varianten
     info "Suche aktuellstes System-Template: ${TEMPLATE_PREFIX}*"
-    local available_template
-    available_template=$(pveam available 2>/dev/null \
-        | awk '$1=="System" {print $2}' \
-        | grep -E "^${TEMPLATE_PREFIX}[0-9]" \
-        | sort -V \
-        | tail -1 || true)
+    local available_template=""
+    local pveam_out=""
+
+    # Methode 1: pveam available --section system (neues PVE), Fallback: pveam available
+    pveam_out=$(pveam available --section system 2>/dev/null || pveam available 2>/dev/null || true)
+
+    if [[ -n "$pveam_out" ]]; then
+        # Korrekte Spalten: $1=TEMPLATE $2=SECTION ("system" klein). Vorheriger Code nutzte $1=="System" (falsch/invertiert).
+        # Robust: case-insensitive Section-Check und Header-Zeile ueberspringen.
+        available_template=$(echo "$pveam_out" \
+            | awk 'NR==1 && tolower($1)=="name" {next} tolower($2)=="system" {print $1}' \
+            | grep -E "^${TEMPLATE_PREFIX}[0-9]" \
+            | sort -V \
+            | tail -1 || true)
+        # Fallback: falls Section-Spalte anders/lokal abweicht, nimm einfach alle mit Prefix
+        if [[ -z "$available_template" ]]; then
+            available_template=$(echo "$pveam_out" \
+                | awk 'NR==1 && tolower($1)=="name" {next} {print $1}' \
+                | grep -E "^${TEMPLATE_PREFIX}[0-9]" \
+                | sort -V \
+                | tail -1 || true)
+        fi
+    fi
+
+    # Methode 2: Falls online-Liste leer (offline / Update fehlgeschlagen), nutze lokal vorhandene Templates
+    if [[ -z "$available_template" ]]; then
+        warn "Kein ${TEMPLATE_PREFIX}*-Template in pveam available gefunden - pruefe lokal vorhandene Templates (pveam list $STORAGE)..."
+        local local_list
+        local_list=$(pveam list "$STORAGE" 2>/dev/null || true)
+        if [[ -n "$local_list" ]]; then
+            # Robust: egal ob "local:vztmpl/name" (colon) oder "local vztmpl/name" (Spalten), extrahiere reinen Dateinamen
+            available_template=$(echo "$local_list" \
+                | grep -oE "${TEMPLATE_PREFIX}[a-zA-Z0-9._-]+\.tar\.(xz|gz|zst)" \
+                | sort -V \
+                | tail -1 || true)
+            # Fallback falls grep -oE Extension-Muster nicht passt (andere Endung): generisch
+            if [[ -z "$available_template" ]]; then
+                available_template=$(echo "$local_list" \
+                    | grep -oE "${TEMPLATE_PREFIX}[^[:space:]]+" \
+                    | grep -E "^${TEMPLATE_PREFIX}[0-9]" \
+                    | sort -V \
+                    | tail -1 || true)
+            fi
+            if [[ -n "$available_template" ]]; then
+                log "Verwende lokal vorhandenes Template: $available_template (Fallback, ohne Download)"
+            fi
+        fi
+    fi
 
     if [[ -z "$available_template" ]]; then
         err "Kein ${TEMPLATE_PREFIX}*-System-Template verfügbar!"
-        err "Verfügbare System-Templates:"
-        pveam available 2>/dev/null | awk '$1=="System" {print $2}' | grep -E "^${TEMPLATE_PREFIX}" || true
-        pveam available 2>/dev/null | awk '$1=="System" {print $2}' | head -5 || true
+        err "Diagnose:"
+        err "  pveam available Ausgabe (erste 30 Zeilen):"
+        if [[ -n "$pveam_out" ]]; then
+            echo "$pveam_out" | head -n 30 | while IFS= read -r line; do err "    $line"; done
+        else
+            err "    (keine Ausgabe - pveam available lieferte leer / Fehler)"
+        fi
+        err "  pvesm status (Storages):"
+        pvesm status 2>/dev/null | head -n 20 | while IFS= read -r line; do err "    $line"; done || true
+        err "  pveam list $STORAGE (lokal):"
+        pveam list "$STORAGE" 2>/dev/null | head -n 20 | while IFS= read -r line; do err "    $line"; done || true
+        err ""
+        err "Loesungen:"
+        err "  1) pveam update  # Template-Liste aktualisieren (Internet erforderlich)"
+        err "  2) pveam available --section system | grep -E '^${TEMPLATE_PREFIX}'"
+        err "  3) Manuell laden: pveam download $STORAGE <template>  (z.B. debian-12-standard_*.tar.zst / alpine-3.19-*.tar.xz)"
+        err "  4) pvesm status pruefen: Storage '$STORAGE' muss existieren und aktiv sein"
         exit 1
     fi
     log "Verwende Template: $available_template"
