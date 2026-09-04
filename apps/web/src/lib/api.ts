@@ -1,7 +1,9 @@
 import axios from 'axios';
 
+// In production the web UI and API are served behind the same nginx origin.
+// Using a relative URL avoids hard-coded localhost requests in the browser.
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3000',
+  baseURL: import.meta.env.VITE_API_URL || '/api',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -128,36 +130,36 @@ export interface PricingCalculationResult {
 }
 
 export const productApi = {
-  list: (params?: ProductListParams) => get<ProductListResponse>('/api/products', { params }),
+  list: (params?: ProductListParams) => get<ProductListResponse>('/products', { params }),
   getReviewQueue: (limit = 50, offset = 0) =>
-    get<ProductListResponse>('/api/products/review', { params: { limit, offset } }),
-  getById: (id: string) => get<Product>(`/api/products/${id}`),
+    get<ProductListResponse>('/products/review', { params: { limit, offset } }),
+  getById: (id: string) => get<Product>(`/products/${id}`),
   saveManualData: (id: string, manualData: ProductContent) =>
-    patch<Product>(`/api/products/${id}/manual-data`, manualData),
-  approve: (id: string) => post<{ status: 'approved'; id: string }>(`/api/products/${id}/approve`),
-  reject: (id: string) => post<{ status: 'rejected'; id: string }>(`/api/products/${id}/reject`),
-  review: (id: string) => post<{ status: 'reviewed'; id: string }>(`/api/products/${id}/review`),
-  sync: (id: string) => post<{ status: 'queued'; id: string; attemptId: string; jobId: string }>(`/api/products/${id}/sync`),
+    patch<Product>(`/products/${id}/manual-data`, manualData),
+  approve: (id: string) => post<{ status: 'approved'; id: string }>(`/products/${id}/approve`),
+  reject: (id: string) => post<{ status: 'rejected'; id: string }>(`/products/${id}/reject`),
+  review: (id: string) => post<{ status: 'reviewed'; id: string }>(`/products/${id}/review`),
+  sync: (id: string) => post<{ status: 'queued'; id: string; attemptId: string; jobId: string }>(`/products/${id}/sync`),
   bulkApprove: (ids: string[]) =>
-    post<{ status: 'approved'; count: number }>('/api/products/bulk-approve', { ids }),
+    post<{ status: 'approved'; count: number }>('/products/bulk-approve', { ids }),
 };
 
 export const pricingApi = {
-  getRules: () => get<PriceRule[]>('/api/pricing/rules'),
-  createRule: (data: unknown) => post<PriceRule>('/api/pricing/rules', data),
-  updateRule: (id: string, data: unknown) => put<{ message: string; id: string }>(`/api/pricing/rules/${id}`, data),
+  getRules: () => get<PriceRule[]>('/pricing/rules'),
+  createRule: (data: unknown) => post<PriceRule>('/pricing/rules', data),
+  updateRule: (id: string, data: unknown) => put<{ message: string; id: string }>(`/pricing/rules/${id}`, data),
   calculate: (data: { supplierNet: number; dropshippingFeeNet?: number; freightAllocatedNet?: number; priceRuleId: string }) =>
-    post<PricingCalculationResult>('/api/pricing/calculate', data),
+    post<PricingCalculationResult>('/pricing/calculate', data),
   simulate: (priceRuleId: string) =>
-    post<{ message: string; affectedProductCount: number }>('/api/pricing/simulate', { priceRuleId }),
-  apply: (priceRuleId: string) => post<{ message: string }>('/api/pricing/apply', { priceRuleId }),
+    post<{ message: string; affectedProductCount: number }>('/pricing/simulate', { priceRuleId }),
+  apply: (priceRuleId: string) => post<{ message: string }>('/pricing/apply', { priceRuleId }),
 };
 
 export const importApi = {
   uploadWhitelist: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    return post<{ message: string; importedCount: number }>('/api/import/upload', formData, {
+    return post<{ message: string; importedCount: number }>('/import/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
