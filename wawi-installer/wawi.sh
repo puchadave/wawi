@@ -9,22 +9,23 @@
 #
 # Flags:
 #   --ctid <id>         Container-ID (Default: 301)
-#   --os <debian|alpine>  Basis-OS (Default: debian)
+#   --os <alpine|debian>  Basis-OS (Default: alpine)
 #   --mode <docker|nativ> Installationsmodus (Default: docker)
 #   --no-gui            Kein whiptail, Defaults verwenden
 #   --quiet             Keine Ausgabe bis zum Schluss
 #   --secrets-dir <pfad>  Pfad zum Importieren von Secrets
+#   --dry-run           Nur Menüs durchspielen, keinen Container erstellen
 # ============================================================================
 set -euo pipefail
 
 # ============================================================================
 # Defaults
 # ============================================================================
-CTID="${CTID:-301}"
-OS_TYPE="${OS_TYPE:-debian}"
-DEPLOY_MODE="${DEPLOY_MODE:-docker}"
-WEB_PORT="${WEB_PORT:-5173}"
-API_PORT="${API_PORT:-3000}"
+CTID=301
+OS_TYPE="alpine"
+DEPLOY_MODE="docker"
+WEB_PORT=5173
+API_PORT=3000
 REPO_URL="https://github.com/puchadave/wawi.git"
 INSTALL_DIR="/opt/wawi"
 ADMIN_USER="puchadev"
@@ -32,8 +33,14 @@ SEED_FILE=""
 SECRETS_DIR=""
 QUIET=false
 GUI=true
+DRY_RUN=false
+STATIC_IP=""
+GATEWAY=""
+RAM=2048
+CPU=2
+DISK=8
 
-# Secrets Defaults (werden durch Import oder Formular überschrieben)
+# Secrets Defaults
 SHOPWARE_BASE_URL="https://uptempo.pucha.dev"
 SHOPWARE_CLIENT_ID=""
 SHOPWARE_CLIENT_SECRET=""
@@ -56,10 +63,10 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-log()   { echo -e "${GREEN}[✓]${NC} $*"; }
-warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
-err()   { echo -e "${RED}[✗]${NC} $*"; }
-info()  { echo -e "${BLUE}[i]${NC} $*"; }
+log()    { echo -e "${GREEN}[✓]${NC} $*"; }
+warn()   { echo -e "${YELLOW}[!]${NC} $*"; }
+err()    { echo -e "${RED}[✗]${NC} $*"; }
+info()   { echo -e "${BLUE}[i]${NC} $*"; }
 header() { echo -e "\n${BOLD}${CYAN}━━━ $* ━━━${NC}\n"; }
 
 # ============================================================================
@@ -68,20 +75,22 @@ header() { echo -e "\n${BOLD}${CYAN}━━━ $* ━━━${NC}\n"; }
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --ctid)       CTID="$2"; shift 2 ;;
-            --os)         OS_TYPE="$2"; shift 2 ;;
-            --mode)       DEPLOY_MODE="$2"; shift 2 ;;
-            --no-gui)     GUI=false; shift ;;
-            --quiet)      QUIET=true; shift ;;
+            --ctid)        CTID="$2"; shift 2 ;;
+            --os)          OS_TYPE="$2"; shift 2 ;;
+            --mode)        DEPLOY_MODE="$2"; shift 2 ;;
+            --no-gui)      GUI=false; shift ;;
+            --quiet)       QUIET=true; shift ;;
+            --dry-run)     DRY_RUN=true; shift ;;
             --secrets-dir) SECRETS_DIR="$2"; shift 2 ;;
             --help|-h)
                 echo "Verwendung: bash wawi.sh [OPTIONS]"
-                echo "  --ctid <id>          Container-ID (Default: 301)"
-                echo "  --os <debian|alpine> Basis-OS (Default: debian)"
-                echo "  --mode <docker|nativ> Installationsmodus (Default: docker)"
-                echo "  --no-gui             Kein whiptail, Defaults verwenden"
-                echo "  --quiet              Keine Ausgabe bis zum Schluss"
-                echo "  --secrets-dir <pfad> Pfad zum Importieren von Secrets"
+                echo "  --ctid <id>            Container-ID (Default: 301)"
+                echo "  --os <alpine|debian>   Basis-OS (Default: alpine)"
+                echo "  --mode <docker|nativ>  Installationsmodus (Default: docker)"
+                echo "  --no-gui               Kein whiptail"
+                echo "  --quiet                Keine Ausgabe bis zum Schluss"
+                echo "  --dry-run              Nur Menüs, kein Deployment"
+                echo "  --secrets-dir <pfad>   Pfad zum Secret-Import"
                 exit 0
                 ;;
             *) err "Unbekanntes Argument: $1"; exit 1 ;;
@@ -115,18 +124,26 @@ check_host() {
 
     if [[ "$GUI" == true ]] && ! command -v whiptail &>/dev/null; then
         warn "whiptail nicht installiert — installiere..."
-        apt-get update -qq && apt-get install -y -qq whiptail
+        if command -v apt-get &>/dev/null; then
+            apt-get update -qq && apt-get install -y -qq whiptail
+        elif command -v apk &>/dev/null; then
+            apk add --no-cache whiptail
+        fi
         log "whiptail installiert"
     fi
 
     if ! command -v git &>/dev/null; then
         warn "git nicht installiert — installiere..."
-        apt-get update -qq && apt-get install -y -qq git
+        if command -v apt-get &>/dev/null; then
+            apt-get update -qq && apt-get install -y -qq git
+        elif command -v apk &>/dev/null; then
+            apk add --no-cache git
+        fi
         log "git installiert"
     fi
 
     # Prüfe ob CTID bereits existiert
-    if pct status "$CTID" &>/dev/null; then
+    if pct status "$CTID" &>/dev/null 2>&1; then
         err "Container $CTID existiert bereits!"
         [[ "$GUI" == true ]] && whiptail --msgbox "Container $CTID existiert bereits.\nWähle eine andere ID oder lösche den bestehenden Container." 10 50
         exit 1
@@ -147,7 +164,7 @@ import_secrets() {
     search_paths+=("$(pwd)")
     [[ -n "$SECRETS_DIR" ]] && search_paths+=("$SECRETS_DIR")
 
-    # Projektpfad erkennen (wenn wir im waWi Repo sind)
+    # Projektpfad erkennen
     local project_dir=""
     if [[ -f "$(pwd)/docker-compose.yml" ]] && [[ -d "$(pwd)/apps/api" ]]; then
         project_dir="$(pwd)"
@@ -158,7 +175,7 @@ import_secrets() {
         [[ -d "$sp" ]] || continue
         while IFS= read -r -d '' f; do
             found_files+=("$f")
-        done < <(find "$sp" -maxdepth 3 -name "*.env" -o -name ".env" -o -name "*.dev" 2>/dev/null | tr '\n' '\0')
+        done < <(find "$sp" -maxdepth 3 \( -name "*.env" -o -name ".env" -o -name "*.dev" \) 2>/dev/null | tr '\n' '\0')
     done
 
     # stack-root Passwörter suchen
@@ -174,21 +191,18 @@ import_secrets() {
         return 0
     fi
 
-    # Dateien als Checkliste anzeigen
-    local checklist_items=""
-    for f in "${found_files[@]}"; do
-        checklist_items+="\"$f\" \"\" ON "
-    done
-
     if [[ "$GUI" == true ]]; then
+        local checklist_args=()
+        for f in "${found_files[@]}"; do
+            checklist_args+=("$f" "" "ON")
+        done
+
         local selected
         selected=$(whiptail --checklist "Gefundene Secrets-Dateien auswählen:" 15 70 8 \
-            ${checklist_items} 3>&1 1>&2 2>&3) || true
+            "${checklist_args[@]}" 3>&1 1>&2 2>&3) || true
 
         if [[ -n "$selected" ]]; then
-            # Anführungszeichen entfernen
             selected=$(echo "$selected" | tr -d '"' | tr -d '\n')
-
             for f in $selected; do
                 load_env_file "$f"
             done
@@ -203,12 +217,12 @@ import_secrets() {
 
 load_env_file() {
     local file="$1"
+    [[ -f "$file" ]] || return 0
     info "Lade: $file"
 
-    # Prüfe ob es eine .env-Datei ist
     if [[ "$file" == *.env ]] || [[ "$(basename "$file")" == ".env" ]]; then
         while IFS='=' read -r key value; do
-            [[ -z "$key" || "$key" == \#* || "$key" == "" ]] && continue
+            [[ -z "$key" || "$key" == \#* ]] && continue
             key=$(echo "$key" | xargs)
             value=$(echo "$value" | xargs | tr -d '"')
 
@@ -228,8 +242,7 @@ load_env_file() {
         log "Env-Werte aus $(basename "$file") geladen"
     fi
 
-    # stack-root Passwort-Datei
-    if [[ -f "$file" ]] && [[ "$file" == *pucha.dev* ]]; then
+    if [[ "$file" == *pucha.dev* ]]; then
         SEED_FILE="$file"
         log "Bootstrap-Passwort-Datei gefunden: $file"
     fi
@@ -242,12 +255,14 @@ select_os() {
     header "Betriebssystem wählen"
 
     if [[ "$GUI" == true ]]; then
-        whiptail --radiolist \
+        local choice
+        choice=$(whiptail --radiolist \
             "Basis-OS für den WaWi-Container wählen:" \
             15 60 2 \
-            "debian" "Debian 12 (empfohlen, Docker-Stabilität)" ON \
-            "alpine" "Alpine 3.20 (schlanker, ~50MB)" OFF \
-            3>&1 1>&2 2>&3 && OS_TYPE="${REPLY:-debian}" || OS_TYPE="debian"
+            "alpine" "Alpine 3.20 (empfohlen, schlank)" ON \
+            "debian" "Debian 12 (größer, Docker-Stabilität)" OFF \
+            3>&1 1>&2 2>&3) || choice="alpine"
+        OS_TYPE="$choice"
     fi
 
     log "OS: $OS_TYPE"
@@ -260,12 +275,14 @@ select_mode() {
     header "Installationsmodus wählen"
 
     if [[ "$GUI" == true ]]; then
-        whiptail --radiolist \
+        local choice
+        choice=$(whiptail --radiolist \
             "Installationsmodus wählen:" \
             15 60 2 \
             "docker" "Docker Compose (empfohlen, stabil, isoliert)" ON \
             "nativ"  "Nativ (Node.js direkt im LXC, schneller)" OFF \
-            3>&1 1>&2 2>&3 && DEPLOY_MODE="${REPLY:-docker}" || DEPLOY_MODE="docker"
+            3>&1 1>&2 2>&3) || choice="docker"
+        DEPLOY_MODE="$choice"
     fi
 
     log "Modus: $DEPLOY_MODE"
@@ -279,13 +296,13 @@ configure_container() {
 
     if [[ "$GUI" == true ]]; then
         local form
-        form=$(whiptail --form "Container-Einstellungen:" 18 65 8 \
-            "Container-ID:" "$CTID" \
-            "RAM (MB):" "2048" \
-            "CPU (Kerne):" "2" \
-            "Disk (GB):" "8" \
-            "IP (CIDR, leer=DHCP):" "" \
-            "Gateway:" "" \
+        form=$(whiptail --form "Container-Einstellungen:" 16 70 6 \
+            "Container-ID:" 1 1  "$CTID" 1 18 10 0 \
+            "RAM (MB):"     2 1  "$RAM"  2 18 10 0 \
+            "CPU (Kerne):"  3 1  "$CPU"  3 18 8 0 \
+            "Disk (GB):"    4 1  "$DISK" 4 18 8 0 \
+            "IP (CIDR, leer=DHCP):" 5 1 "$STATIC_IP" 5 18 18 0 \
+            "Gateway:"      6 1  "$GATEWAY" 6 18 18 0 \
             3>&1 1>&2 2>&3) || true
 
         if [[ -n "$form" ]]; then
@@ -298,27 +315,27 @@ configure_container() {
             new_gw=$(echo "$form" | sed -n '6p')
 
             [[ -n "$new_ctid" ]] && CTID="$new_ctid"
-            local RAM="${new_ram:-2048}"
-            local CPU="${new_cpu:-2}"
-            local DISK="${new_disk:-8}"
-            local STATIC_IP="${new_ip}"
-            local GATEWAY="${new_gw}"
+            [[ -n "$new_ram" ]] && RAM="$new_ram"
+            [[ -n "$new_cpu" ]] && CPU="$new_cpu"
+            [[ -n "$new_disk" ]] && DISK="$new_disk"
+            [[ -n "$new_ip" ]] && STATIC_IP="$new_ip"
+            [[ -n "$new_gw" ]] && GATEWAY="$new_gw"
         fi
-    else
-        local RAM="2048"
-        local CPU="2"
-        local DISK="8"
-        local STATIC_IP=""
-        local GATEWAY=""
+    fi
+
+    # CTID validieren
+    if [[ ! "$CTID" =~ ^[0-9]+$ ]]; then
+        warn "Ungültige CT-ID: $CTID — nutze 301"
+        CTID=301
     fi
 
     # CTID nochmal prüfen (kann sich geändert haben)
-    if pct status "$CTID" &>/dev/null; then
+    if [[ "$DRY_RUN" == false ]] && pct status "$CTID" &>/dev/null 2>&1; then
         err "Container $CTID existiert bereits!"
         exit 1
     fi
 
-    log "CTID=$CTID RAM=${RAM:-2048}MB CPU=${CPU:-2} Disk=${DISK:-8}GB"
+    log "CTID=$CTID RAM=${RAM}MB CPU=${CPU} Disk=${DISK}GB IP=${STATIC_IP:-DHCP}"
 }
 
 # ============================================================================
@@ -335,18 +352,18 @@ configure_secrets() {
 
     if [[ "$GUI" == true ]]; then
         local form
-        form=$(whiptail --form "API-Keys & Secrets eintragen (vorbefüllt):" 24 75 12 \
-            "Shopware Base URL:" "$SHOPWARE_BASE_URL" \
-            "Shopware Client ID:" "$SHOPWARE_CLIENT_ID" \
-            "Shopware Client Secret:" "$SHOPWARE_CLIENT_SECRET" \
-            "Shopware Tax ID:" "$SHOPWARE_TAX_ID" \
-            "DATABASE_URL:" "$DATABASE_URL" \
-            "REDIS_URL:" "$REDIS_URL" \
-            "JWT_SECRET:" "$JWT_SECRET" \
-            "Matterhorn API Key:" "$MATTERHORN_API_KEY" \
-            "OpenAI API Key:" "$OPENAI_API_KEY" \
-            "Web Port:" "$WEB_PORT" \
-            "API Port:" "$API_PORT" \
+        form=$(whiptail --form "API-Keys & Secrets eintragen (vorbefüllt):" 22 75 11 \
+            "Shopware Base URL:" 1 1 "$SHOPWARE_BASE_URL" 1 22 40 0 \
+            "Shopware Client ID:" 2 1 "$SHOPWARE_CLIENT_ID" 2 22 40 0 \
+            "Shopware Client Secret:" 3 1 "$SHOPWARE_CLIENT_SECRET" 3 22 40 0 \
+            "Shopware Tax ID:" 4 1 "$SHOPWARE_TAX_ID" 4 22 40 0 \
+            "DATABASE_URL:" 5 1 "$DATABASE_URL" 5 22 40 0 \
+            "REDIS_URL:" 6 1 "$REDIS_URL" 6 22 40 0 \
+            "JWT_SECRET:" 7 1 "$JWT_SECRET" 7 22 40 0 \
+            "Matterhorn API Key:" 8 1 "$MATTERHORN_API_KEY" 8 22 40 0 \
+            "OpenAI API Key:" 9 1 "$OPENAI_API_KEY" 9 22 40 0 \
+            "Web Port:" 10 1 "$WEB_PORT" 10 22 10 0 \
+            "API Port:" 11 1 "$API_PORT" 11 22 10 0 \
             3>&1 1>&2 2>&3) || true
 
         if [[ -n "$form" ]]; then
@@ -373,60 +390,67 @@ configure_secrets() {
 create_lxc() {
     header "LXC-Container erstellen"
 
+    if [[ "$DRY_RUN" == true ]]; then
+        info "DRY-RUN: Überspringe LXC-Erstellung"
+        log "CTID=$CTID OS=$OS_TYPE MODUS=$DEPLOY_MODE RAM=${RAM}CPU=${CPU}DISK=${DISK}"
+        return 0
+    fi
+
     local TEMPLATE=""
     local STORAGE="local"
     local BRIDGE="vmbr0"
 
     if [[ "$OS_TYPE" == "debian" ]]; then
-        TEMPLATE="debian-12-standard"
+        TEMPLATE="debian-12"
     else
         TEMPLATE="alpine-3.20"
     fi
 
-    # Template herunterladen falls nicht vorhanden
-    info "Prüfe Template: $TEMPLATE"
-    pveam update -qq 2>/dev/null || true
+    # Template-Handling: pveam update (fehlertolerant)
+    info "Aktualisiere Template-Liste..."
+    pveam update 2>/dev/null || warn "pveam update hatte Fehler (nicht kritisch)"
 
-    if ! pveam available | grep -q "$TEMPLATE"; then
-        err "Template $TEMPLATE nicht verfügbar!"
+    # Template suchen (Präfix-Match)
+    info "Suche Template: ${TEMPLATE}*"
+    local available_template
+    available_template=$(pveam available 2>/dev/null | grep -i "${TEMPLATE}" | awk '{print $2}' | head -1 || true)
+
+    if [[ -z "$available_template" ]]; then
+        err "Template für $TEMPLATE nicht verfügbar!"
+        err "Verfügbare Templates:"
+        pveam available 2>/dev/null | grep -iE "alpine|debian" | head -10 || true
         exit 1
     fi
 
-    if ! pveam list "$STORAGE" | grep -q "$TEMPLATE"; then
-        info "Lade Template herunter: $TEMPLATE"
-        pveam download "$STORAGE" "$TEMPLATE"
-        log "Template heruntergeladen"
+    # Prüfe ob Template lokal vorhanden
+    if ! pveam list "$STORAGE" 2>/dev/null | grep -q "$available_template"; then
+        info "Lade Template herunter: $available_template"
+        pveam download "$STORAGE" "$available_template" || {
+            err "Template-Download fehlgeschlagen!"
+            exit 1
+        }
+        log "Template heruntergeladen: $available_template"
     else
-        log "Template vorhanden: $TEMPLATE"
+        log "Template vorhanden: $available_template"
     fi
-
-    # Mount-Punkt für Quellen
-    local SRC_MNT="/mnt/pve/wawi-src"
-    mkdir -p "$SRC_MNT"
-    cp -r /opt/wawi "$SRC_MNT/wawi" 2>/dev/null || {
-        # Falls /opt/wawi nicht existiert, klonen wir nachher im Container
-        mkdir -p "$SRC_MNT/wawi"
-    }
-
-    # LXC erstellen
-    info "Erstelle Container $CTID..."
 
     # Netzwerk-Parameter
     local NET_PARAM="name=eth0,bridge=${BRIDGE},hwaddr=$(printf '02:%02x:%02x:%02x:%02x:%02x' $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)))"
-    if [[ -n "${STATIC_IP:-}" ]]; then
+    if [[ -n "$STATIC_IP" ]]; then
         NET_PARAM+=",ip=${STATIC_IP}"
-        [[ -n "${GATEWAY:-}" ]] && NET_PARAM+=",gw=${GATEWAY}"
+        [[ -n "$GATEWAY" ]] && NET_PARAM+=",gw=${GATEWAY}"
     else
         NET_PARAM+=",ip=dhcp"
     fi
 
-    # Debian-Speicher-Rootfs optimiert
-    local DISK_SIZE="${DISK:-8}G"
+    local DISK_SIZE="${DISK}G"
 
-    pct create "$CTID" "${STORAGE}:vztmpl/${TEMPLATE}.tar.zst" \
+    # LXC erstellen
+    info "Erstelle Container $CTID..."
+    pct create "$CTID" "${STORAGE}:vztmpl/${available_template}" \
         --hostname "wawi-${CTID}" \
-        --memory "${RAM:-2048}" \
-        --cores "${CPU:-2}" \
+        --memory "$RAM" \
+        --cores "$CPU" \
         --rootfs "${STORAGE}:${DISK_SIZE}" \
         --net0 "$NET_PARAM" \
         --ostype "$OS_TYPE" \
@@ -462,6 +486,11 @@ create_lxc() {
 # ============================================================================
 deploy_app() {
     header "WaWi deployen"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        info "DRY-RUN: Überspringe Deployment"
+        return 0
+    fi
 
     if [[ "$DEPLOY_MODE" == "docker" ]]; then
         deploy_docker
@@ -519,7 +548,6 @@ deploy_docker() {
 deploy_nativ() {
     info "Installiere Node.js im Container..."
 
-    # Node vom Hersteller (immer aktuelle LTS/Current)
     if [[ "$OS_TYPE" == "debian" ]]; then
         pct exec "$CTID" -- bash -c "
             apt-get update -qq &&
@@ -528,7 +556,7 @@ deploy_nativ() {
             apt-get install -y -qq nodejs
         "
     else
-        # Alpine: Node direkt vom Hersteller (nodejs.org)
+        # Alpine: Node direkt vom Hersteller
         pct exec "$CTID" -- bash -c "
             apk add --no-cache curl git python3 make g++ &&
             NODE_VERSION=\$(curl -s https://nodejs.org/dist/index.json | grep -oP '\"version\":\"v\\K[0-9.]+' | head -1) &&
@@ -560,9 +588,37 @@ deploy_nativ() {
     "
     log "Build abgeschlossen"
 
-    # API starten (persistent via systemd)
-    pct exec "$CTID" -- bash -c "
-        cat > /etc/systemd/system/wawi-api.service << 'EOF'
+    # API starten (persistent via openrc auf Alpine)
+    if [[ "$OS_TYPE" == "alpine" ]]; then
+        pct exec "$CTID" -- bash -c "
+            cat > /etc/init.d/wawi-api << 'INITEOF'
+#!/sbin/openrc-run
+
+name=\"wawi-api\"
+description=\"WaWi API Server\"
+command=\"/usr/local/bin/node\"
+command_args=\"$INSTALL_DIR/apps/api/dist/index.js\"
+command_background=true
+pidfile=\"/run/wawi-api.pid\"
+output_log=\"/var/log/wawi-api.log\"
+error_log=\"/var/log/wawi-api.log\"
+
+depend() {
+    need net
+    after docker
+}
+
+start_pre() {
+    export \$(cat $INSTALL_DIR/.env | grep -v '^#' | xargs)
+}
+INITEOF
+            chmod +x /etc/init.d/wawi-api &&
+            rc-update add wawi-api default &&
+            rc-service wawi-api start
+        "
+    else
+        pct exec "$CTID" -- bash -c "
+            cat > /etc/systemd/system/wawi-api.service << 'EOF'
 [Unit]
 Description=WaWi API
 After=network.target
@@ -579,26 +635,27 @@ EnvironmentFile=$INSTALL_DIR/.env
 [Install]
 WantedBy=multi-user.target
 EOF
-        systemctl daemon-reload &&
-        systemctl enable wawi-api &&
-        systemctl start wawi-api
-    "
+            systemctl daemon-reload &&
+            systemctl enable wawi-api &&
+            systemctl start wawi-api
+        "
+    fi
     log "API-Service gestartet"
 
     # Web: nginx + static build
-    if [[ "$OS_TYPE" == "debian" ]]; then
-        pct exec "$CTID" -- bash -c "
-            apt-get install -y -qq nginx &&
-            cp -r $INSTALL_DIR/apps/web/dist/* /var/www/html/ &&
-            systemctl enable nginx &&
-            systemctl restart nginx
-        "
-    else
+    if [[ "$OS_TYPE" == "alpine" ]]; then
         pct exec "$CTID" -- bash -c "
             apk add nginx &&
             cp -r $INSTALL_DIR/apps/web/dist/* /var/www/localhost/htdocs/ &&
             rc-update add nginx default &&
             service nginx start
+        "
+    else
+        pct exec "$CTID" -- bash -c "
+            apt-get install -y -qq nginx &&
+            cp -r $INSTALL_DIR/apps/web/dist/* /var/www/html/ &&
+            systemctl enable nginx &&
+            systemctl restart nginx
         "
     fi
     log "Web-Server gestartet"
@@ -653,6 +710,11 @@ ENVEOF"
 health_check() {
     header "Health-Check"
 
+    if [[ "$DRY_RUN" == true ]]; then
+        info "DRY-RUN: Überspringe Health-Check"
+        return 0
+    fi
+
     # Bootstrap-Admin prüfen
     local stack_root="$INSTALL_DIR/stack-root"
     local seed_installed=false
@@ -669,8 +731,8 @@ health_check() {
     local retries=30
     while [[ $retries -gt 0 ]]; do
         local api_ip
-        api_ip=$(pct exec "$CTID" -- hostname -I 2>/dev/null | awk '{print $1}')
-        if curl -sf "http://${api_ip}:${API_PORT}/health" >/dev/null 2>&1; then
+        api_ip=$(pct exec "$CTID" -- hostname -I 2>/dev/null | awk '{print $1}') || true
+        if [[ -n "$api_ip" ]] && curl -sf "http://${api_ip}:${API_PORT}/health" >/dev/null 2>&1; then
             log "API antwortet auf Port ${API_PORT}"
             break
         fi
@@ -696,6 +758,11 @@ health_check() {
 backup_credentials() {
     header "Zugangsdaten sichern"
 
+    if [[ "$DRY_RUN" == true ]]; then
+        info "DRY-RUN: Überspringe Backup"
+        return 0
+    fi
+
     if [[ "$GUI" == true ]]; then
         local backup_path
         backup_path=$(whiptail --inputbox "Pfad für Credential-Backup (Enter = überspringen):" 10 60 "/gdrive/wawi" 3>&1 1>&2 2>&3) || true
@@ -703,17 +770,14 @@ backup_credentials() {
         if [[ -n "$backup_path" ]]; then
             mkdir -p "$backup_path"
 
-            # .env sichern
             pct pull "$CTID" "$INSTALL_DIR/.env" "$backup_path/.env" 2>/dev/null || true
 
-            # Passwort sichern
             if [[ -n "$SEED_FILE" ]] && [[ -f "$SEED_FILE" ]]; then
                 cp "$SEED_FILE" "$backup_path/pucha.dev"
             fi
 
-            # Zusammenfassung
             local api_ip
-            api_ip=$(pct exec "$CTID" -- hostname -I 2>/dev/null | awk '{print $1}')
+            api_ip=$(pct exec "$CTID" -- hostname -I 2>/dev/null | awk '{print $1}') || api_ip="<CT-IP>"
 
             cat > "$backup_path/wawi-access.txt" << EOF
 WaWi Middleware - Zugangsdaten
@@ -751,9 +815,10 @@ EOF
 show_summary() {
     header "Installation abgeschlossen"
 
-    local api_ip
-    api_ip=$(pct exec "$CTID" -- hostname -I 2>/dev/null | awk '{print $1}')
-    [[ -z "$api_ip" ]] && api_ip="<CT-IP>"
+    local api_ip="<CT-IP>"
+    if [[ "$DRY_RUN" == false ]]; then
+        api_ip=$(pct exec "$CTID" -- hostname -I 2>/dev/null | awk '{print $1}') || api_ip="<CT-IP>"
+    fi
 
     local pw="siehe stack-root/pucha.dev im Container"
     [[ -n "$SEED_FILE" ]] && [[ -f "$SEED_FILE" ]] && pw=$(cat "$SEED_FILE")
@@ -799,6 +864,7 @@ main() {
         echo "╔══════════════════════════════════════════════════╗"
         echo "║     WaWi PVE Helper - Installation              ║"
         echo "║     Matterhorn → Shopware 6 Middleware           ║"
+        [[ "$DRY_RUN" == true ]] && echo "║     *** DRY-RUN MODE ***                        ║"
         echo "╚══════════════════════════════════════════════════╝"
         echo -e "${NC}"
     fi
