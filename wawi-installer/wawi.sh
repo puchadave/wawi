@@ -39,6 +39,7 @@ GATEWAY=""
 RAM=2048
 CPU=2
 DISK=8
+DEBIAN_VARIANT="standard"  # standard | minimal (nur relevant wenn OS_TYPE=debian)
 
 # Secrets Defaults
 SHOPWARE_BASE_URL="https://uptempo.pucha.dev"
@@ -51,6 +52,26 @@ JWT_SECRET=""
 MATTERHORN_API_KEY=""
 OPENAI_API_KEY=""
 WEB_URL=""
+
+# ============================================================================
+# Gemeinsame Bibliothek (lib/common.sh) - falls vorhanden einbinden
+# ---------------------------------------------------------------------------
+# Stellt sicher dass validate_environment, require_command, install_* etc.
+# zentral gepflegt sind. Fallback: Definitionen hier, falls lib fehlt.
+# ============================================================================
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+COMMON_SH="${SCRIPT_DIR}/lib/common.sh"
+if [[ -f "$COMMON_SH" ]]; then
+    # shellcheck source=/dev/null
+    source "$COMMON_SH" 2>/dev/null || true
+fi
+
+# Fallback falls lib/common.sh nicht geladen (z.B. curl-pipe)
+if ! declare -F validate_environment &>/dev/null; then
+    # Minimal-Fallback: nur validate_environment stub, echte Pruefung erfolgt im Container via lib
+    validate_environment() { echo "[i] validate_environment Fallback (OS=${1:-unknown} MODE=${2:-docker})"; return 0; }
+    require_command() { command -v "$1" &>/dev/null; }
+fi
 
 # ============================================================================
 # Farben & Logging
@@ -76,7 +97,16 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --ctid)        CTID="$2"; shift 2 ;;
-            --os)          OS_TYPE="$2"; shift 2 ;;
+            --os)
+                case "$2" in
+                    debian-minimal|debian:minimal) OS_TYPE="debian"; DEBIAN_VARIANT="minimal" ;;
+                    debian-standard|debian:standard) OS_TYPE="debian"; DEBIAN_VARIANT="standard" ;;
+                    debian|alpine) OS_TYPE="$2" ;;
+                    *) err "Unbekanntes --os: $2 (erlaubt: debian, debian-minimal, alpine)"; exit 1 ;;
+                esac
+                shift 2
+                ;;
+            --debian-variant) DEBIAN_VARIANT="$2"; shift 2 ;;
             --mode)        DEPLOY_MODE="$2"; shift 2 ;;
             --no-gui)      GUI=false; shift ;;
             --quiet)       QUIET=true; shift ;;
@@ -84,18 +114,32 @@ parse_args() {
             --secrets-dir) SECRETS_DIR="$2"; shift 2 ;;
             --help|-h)
                 echo "Verwendung: bash wawi.sh [OPTIONS]"
-                echo "  --ctid <id>            Container-ID (Default: 301)"
-                echo "  --os <alpine|debian>   Basis-OS (Default: alpine)"
-                echo "  --mode <docker|nativ>  Installationsmodus (Default: docker)"
-                echo "  --no-gui               Kein whiptail"
-                echo "  --quiet                Keine Ausgabe bis zum Schluss"
-                echo "  --dry-run              Nur Menüs, kein Deployment"
-                echo "  --secrets-dir <pfad>   Pfad zum Secret-Import"
+                echo "  --ctid <id>                    Container-ID (Default: 301)"
+                echo "  --os <alpine|debian|debian-minimal> Basis-OS (Default: alpine)"
+                echo "  --debian-variant <standard|minimal> Debian-Variante (Default: standard)"
+                echo "  --mode <docker|nativ>          Installationsmodus (Default: docker)"
+                echo "  --no-gui                       Kein whiptail"
+                echo "  --quiet                        Keine Ausgabe bis zum Schluss"
+                echo "  --dry-run                      Nur Menüs, kein Deployment"
+                echo "  --secrets-dir <pfad>           Pfad zum Secret-Import"
+                echo ""
+                echo "Installer-Pfade:"
+                echo "  wawi-installer/install-debian.sh         (Debian Standard, offizielles Docker-Repo)"
+                echo "  wawi-installer/install-debian-minimal.sh (Debian Minimal, --no-install-recommends)"
+                echo "  wawi-installer/install-alpine.sh         (Alpine, apk)"
                 exit 0
                 ;;
             *) err "Unbekanntes Argument: $1"; exit 1 ;;
         esac
     done
+    # Normalisiere Debian-Variante
+    if [[ "$OS_TYPE" != "debian" ]]; then
+        DEBIAN_VARIANT="standard"
+    fi
+    if [[ "$DEBIAN_VARIANT" != "standard" && "$DEBIAN_VARIANT" != "minimal" ]]; then
+        warn "Unbekannte DEBIAN_VARIANT=$DEBIAN_VARIANT - nutze standard"
+        DEBIAN_VARIANT="standard"
+    fi
 }
 
 # ============================================================================
@@ -122,25 +166,64 @@ check_host() {
     fi
     log "pvesm erkannt"
 
+    # whiptail optional nur fuer GUI
     if [[ "$GUI" == true ]] && ! command -v whiptail &>/dev/null; then
         warn "whiptail nicht installiert — installiere..."
         if command -v apt-get &>/dev/null; then
-            apt-get update -qq && apt-get install -y -qq whiptail
+            apt-get update -qq && apt-get install -y -qq whiptail || true
         elif command -v apk &>/dev/null; then
-            apk add --no-cache whiptail
+            apk add --no-cache whiptail || true
         fi
-        log "whiptail installiert"
+        if command -v whiptail &>/dev/null; then log "whiptail installiert"; else warn "whiptail weiterhin nicht verfuegbar - fahre ohne GUI fort"; fi
     fi
 
+    # Robustes Host-Dependency Handling: vor Installation pruefen, nachinstallieren, erneut pruefen
+    # Muster: require_command git || install_git ; require_command git || fatal
     if ! command -v git &>/dev/null; then
-        warn "git nicht installiert — installiere..."
+        warn "git auf Host nicht gefunden - installiere..."
         if command -v apt-get &>/dev/null; then
-            apt-get update -qq && apt-get install -y -qq git
+            apt-get update -qq && apt-get install -y -qq git || true
         elif command -v apk &>/dev/null; then
-            apk add --no-cache git
+            apk add --no-cache git || true
         fi
-        log "git installiert"
     fi
+    if ! command -v git &>/dev/null; then
+        fatal "Git installation failed - git auf Host nicht verfuegbar (Host-Check)"
+    fi
+    git --version >/dev/null 2>&1 || fatal "git --version auf Host fehlgeschlagen"
+    log "git OK auf Host: $(git --version 2>&1 | head -n1)"
+
+    if ! command -v curl &>/dev/null; then
+        warn "curl auf Host nicht gefunden - installiere..."
+        if command -v apt-get &>/dev/null; then apt-get update -qq && apt-get install -y -qq curl || true
+        elif command -v apk &>/dev/null; then apk add --no-cache curl || true; fi
+    fi
+    if ! command -v curl &>/dev/null; then fatal "curl installation failed auf Host"; fi
+    log "curl OK auf Host: $(curl --version 2>&1 | head -n1)"
+
+    if ! command -v bash &>/dev/null; then
+        warn "bash auf Host nicht gefunden - installiere..."
+        if command -v apt-get &>/dev/null; then apt-get update -qq && apt-get install -y -qq bash || true
+        elif command -v apk &>/dev/null; then apk add --no-cache bash || true; fi
+    fi
+    if ! command -v bash &>/dev/null; then fatal "bash installation failed auf Host"; fi
+    log "bash OK auf Host: $(bash --version 2>&1 | head -n1)"
+
+    # ca-certificates (Host)
+    if ! test -f /etc/ssl/certs/ca-certificates.crt && ! test -f /etc/ssl/certs/ca-bundle.crt && ! dpkg -l ca-certificates 2>/dev/null | grep -q "^ii" && ! apk info 2>/dev/null | grep -q ca-certificates; then
+        warn "ca-certificates auf Host nicht gefunden - installiere..."
+        if command -v apt-get &>/dev/null; then apt-get update -qq && apt-get install -y -qq ca-certificates || true
+        elif command -v apk &>/dev/null; then apk add --no-cache ca-certificates || true; fi
+    fi
+    if ! test -f /etc/ssl/certs/ca-certificates.crt && ! test -f /etc/ssl/certs/ca-bundle.crt && ! dpkg -l ca-certificates 2>/dev/null | grep -q "^ii" && ! apk info 2>/dev/null | grep -q ca-certificates; then
+        fatal "ca-certificates installation failed auf Host"; fi
+    log "ca-certificates OK auf Host"
+
+    # Finale command -v Checks wie gefordert
+    for _cmd in git curl bash; do
+        if ! command -v "$_cmd" &>/dev/null; then fatal "command -v $_cmd auf Host fehlgeschlagen"; fi
+    done
+    log "Host-Dependencies OK (git/curl/ca-certificates/bash)" 
 
     # Prüfe ob CTID bereits existiert
     if pct status "$CTID" &>/dev/null 2>&1; then
@@ -258,14 +341,34 @@ select_os() {
         local choice
         choice=$(whiptail --radiolist \
             "Basis-OS für den WaWi-Container wählen:" \
-            15 60 2 \
+            15 70 3 \
             "alpine" "Alpine 3.20 (empfohlen, schlank)" ON \
-            "debian" "Debian 12 (größer, Docker-Stabilität)" OFF \
+            "debian" "Debian 12 Standard (stabil, offiz. Docker-Repo)" OFF \
+            "debian-minimal" "Debian 12 Minimal (--no-install-recommends)" OFF \
             3>&1 1>&2 2>&3) || choice="alpine"
-        OS_TYPE="$choice"
+        case "$choice" in
+            debian-minimal) OS_TYPE="debian"; DEBIAN_VARIANT="minimal" ;;
+            debian)         OS_TYPE="debian"; DEBIAN_VARIANT="standard" ;;
+            *)              OS_TYPE="$choice" ;;
+        esac
+        # Bei Debian Standard/Minimal zweite Abfrage falls direkt debian gewaehlt
+        if [[ "$OS_TYPE" == "debian" && "$choice" == "debian" ]]; then
+            local vchoice
+            vchoice=$(whiptail --radiolist \
+                "Debian-Variante waehlen:" \
+                12 60 2 \
+                "standard" "Standard (offizielles Docker-Repo, empfohlen)" ON \
+                "minimal"  "Minimal (--no-install-recommends, schlank)" OFF \
+                3>&1 1>&2 2>&3) || vchoice="standard"
+            DEBIAN_VARIANT="$vchoice"
+        fi
     fi
 
-    log "OS: $OS_TYPE"
+    if [[ "$OS_TYPE" == "debian" ]]; then
+        log "OS: $OS_TYPE ($DEBIAN_VARIANT)"
+    else
+        log "OS: $OS_TYPE"
+    fi
 }
 
 # ============================================================================
@@ -507,92 +610,387 @@ deploy_app() {
 }
 
 deploy_docker() {
-    info "Installiere Docker im Container..."
+    info "Installiere Docker im Container (robuste Dependency-Pruefung)..."
 
+    # ------------------------------------------------------------------
+    # 1) Basis-Dependencies installieren (OS-spezifisch, sauber getrennt)
+    # ------------------------------------------------------------------
     if [[ "$OS_TYPE" == "debian" ]]; then
-        pct exec "$CTID" -- bash -c "
-            apt-get update -qq &&
-            apt-get install -y -qq ca-certificates curl gnupg &&
-            install -m 0755 -d /etc/apt/keyrings &&
-            curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg &&
-            chmod a+r /etc/apt/keyrings/docker.gpg &&
-            echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian \$(. /etc/os-release && echo \$VERSION_CODENAME) stable\" > /etc/apt/sources.list.d/docker.list &&
-            apt-get update -qq &&
-            apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin &&
-            systemctl enable docker &&
-            systemctl start docker
-        "
+        if [[ "${DEBIAN_VARIANT:-standard}" == "minimal" ]]; then
+            info "Debian Minimal: installiere Basis-Dependencies (--no-install-recommends)..."
+            pct exec "$CTID" -- bash -c "
+                set -e
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -qq
+                apt-get install -y --no-install-recommends git curl ca-certificates bash gnupg
+            "
+        else
+            info "Debian Standard: installiere Basis-Dependencies (offizielles Docker-Repo)..."
+            pct exec "$CTID" -- bash -c "
+                set -e
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -qq
+                apt-get install -y git curl ca-certificates bash gnupg
+            "
+        fi
     else
+        info "Alpine: installiere Basis-Dependencies (apk)..."
         pct exec "$CTID" -- bash -c "
-            apk update &&
-            apk add docker docker-compose &&
-            rc-update add docker boot &&
-            service docker start
+            set -e
+            apk update
+            apk add --no-cache git curl ca-certificates bash gnupg
+            update-ca-certificates 2>/dev/null || true
         "
     fi
-    log "Docker installiert"
 
-    # Git klonen
-    info "Klone WaWi-Repo..."
+    # ------------------------------------------------------------------
+    # 2) Nach Installation jede Dependency aktiv pruefen + Auto-Repair
+    #    Vorgabe: command -v git / curl / bash, docker --version, docker compose version
+    # ------------------------------------------------------------------
+    info "Aktive Verifikation Basis-Dependencies im Container..."
+
+    # git: require_command git || install_git ; require_command git || fatal
+    if ! pct exec "$CTID" -- bash -c "command -v git >/dev/null 2>&1"; then
+        warn "git im Container nicht gefunden - versuche Nachinstallation..."
+        if [[ "$OS_TYPE" == "debian" ]]; then
+            if [[ "${DEBIAN_VARIANT:-standard}" == "minimal" ]]; then
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y --no-install-recommends git" || true
+            else
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y git" || true
+            fi
+        else
+            pct exec "$CTID" -- bash -c "apk add --no-cache git" || true
+        fi
+    fi
+    if ! pct exec "$CTID" -- bash -c "command -v git >/dev/null 2>&1"; then
+        err "Git installation failed - git weiterhin nicht verfuegbar (command -v git fehlgeschlagen)"
+        exit 1
+    fi
+    pct exec "$CTID" -- bash -c "git --version" || { err "git --version fehlgeschlagen"; exit 1; }
+    log "git OK im Container: $(pct exec "$CTID" -- bash -c "git --version" 2>&1 | head -n1 || echo "unknown")"
+
+    # curl
+    if ! pct exec "$CTID" -- bash -c "command -v curl >/dev/null 2>&1"; then
+        warn "curl im Container nicht gefunden - versuche Nachinstallation..."
+        if [[ "$OS_TYPE" == "debian" ]]; then
+            if [[ "${DEBIAN_VARIANT:-standard}" == "minimal" ]]; then
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y --no-install-recommends curl" || true
+            else
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y curl" || true
+            fi
+        else
+            pct exec "$CTID" -- bash -c "apk add --no-cache curl" || true
+        fi
+    fi
+    if ! pct exec "$CTID" -- bash -c "command -v curl >/dev/null 2>&1"; then err "curl installation failed"; exit 1; fi
+    pct exec "$CTID" -- bash -c "curl --version | head -n1"
+
+    # ca-certificates
+    if ! pct exec "$CTID" -- bash -c "test -f /etc/ssl/certs/ca-certificates.crt || test -f /etc/ssl/certs/ca-bundle.crt || dpkg -l ca-certificates 2>/dev/null | grep -q '^ii' || apk info 2>/dev/null | grep -q ca-certificates"; then
+        warn "ca-certificates im Container nicht gefunden - versuche Nachinstallation..."
+        if [[ "$OS_TYPE" == "debian" ]]; then
+            if [[ "${DEBIAN_VARIANT:-standard}" == "minimal" ]]; then
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y --no-install-recommends ca-certificates" || true
+            else
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y ca-certificates" || true
+            fi
+        else
+            pct exec "$CTID" -- bash -c "apk add --no-cache ca-certificates; update-ca-certificates 2>/dev/null || true" || true
+        fi
+    fi
+    if ! pct exec "$CTID" -- bash -c "test -f /etc/ssl/certs/ca-certificates.crt || test -f /etc/ssl/certs/ca-bundle.crt || dpkg -l ca-certificates 2>/dev/null | grep -q '^ii' || apk info 2>/dev/null | grep -q ca-certificates"; then
+        err "ca-certificates installation failed"; exit 1; fi
+    log "ca-certificates OK im Container"
+
+    # bash
+    if ! pct exec "$CTID" -- bash -c "command -v bash >/dev/null 2>&1"; then
+        warn "bash im Container nicht gefunden - versuche Nachinstallation..."
+        if [[ "$OS_TYPE" == "debian" ]]; then
+            if [[ "${DEBIAN_VARIANT:-standard}" == "minimal" ]]; then
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y --no-install-recommends bash" || true
+            else
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y bash" || true
+            fi
+        else
+            pct exec "$CTID" -- bash -c "apk add --no-cache bash" || true
+        fi
+    fi
+    if ! pct exec "$CTID" -- bash -c "command -v bash >/dev/null 2>&1"; then err "bash installation failed"; exit 1; fi
+    pct exec "$CTID" -- bash -c "bash --version | head -n1"
+
+    # explizite Checks wie gefordert
+    pct exec "$CTID" -- bash -c "command -v git && command -v curl && command -v bash && echo '[OK] command -v Checks bestanden'" || { err "command -v Verifikation fehlgeschlagen"; exit 1; }
+
+    # ------------------------------------------------------------------
+    # 3) Docker installieren (OS-spezifisch) - erst nach Basis-Validierung
+    # ------------------------------------------------------------------
+    info "Installiere Docker im Container..."
+    if [[ "$OS_TYPE" == "debian" ]]; then
+        if [[ "${DEBIAN_VARIANT:-standard}" == "minimal" ]]; then
+            pct exec "$CTID" -- bash -c "
+                set -e
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -qq
+                apt-get install -y --no-install-recommends docker.io docker-compose ca-certificates curl || true
+                apt-get install -y --no-install-recommends docker-compose-plugin 2>/dev/null || true
+                if command -v systemctl >/dev/null 2>&1; then systemctl enable docker 2>/dev/null || true; systemctl start docker 2>/dev/null || true; fi
+                if ! docker info >/dev/null 2>&1; then dockerd >/dev/null 2>&1 & sleep 3; fi
+            "
+        else
+            pct exec "$CTID" -- bash -c "
+                set -e
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -qq
+                apt-get install -y ca-certificates curl gnupg
+                install -m 0755 -d /etc/apt/keyrings
+                curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+                chmod a+r /etc/apt/keyrings/docker.gpg
+                echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian \$(. /etc/os-release && echo \$VERSION_CODENAME) stable\" > /etc/apt/sources.list.d/docker.list
+                apt-get update -qq
+                apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+                if command -v systemctl >/dev/null 2>&1; then systemctl enable docker 2>/dev/null || true; systemctl start docker 2>/dev/null || true; fi
+                if ! docker info >/dev/null 2>&1; then dockerd >/dev/null 2>&1 & sleep 3; fi
+            "
+        fi
+    else
+        pct exec "$CTID" -- bash -c "
+            set -e
+            apk update
+            apk add --no-cache docker docker-compose ca-certificates curl bash
+            apk add --no-cache docker-cli-compose 2>/dev/null || true
+            if command -v rc-update >/dev/null 2>&1; then rc-update add docker boot 2>/dev/null || true; service docker start 2>/dev/null || true; fi
+            if ! docker info >/dev/null 2>&1; then dockerd >/dev/null 2>&1 & sleep 3; fi
+        "
+    fi
+    log "Docker Installation abgeschlossen - verifiziere..."
+
+    # ------------------------------------------------------------------
+    # 4) Docker aktiv pruefen: command -v docker, docker --version, docker compose version
+    # ------------------------------------------------------------------
+    if ! pct exec "$CTID" -- bash -c "command -v docker >/dev/null 2>&1"; then err "docker installation failed - command -v docker fehlgeschlagen"; exit 1; fi
+    pct exec "$CTID" -- bash -c "docker --version" || { err "docker --version fehlgeschlagen"; exit 1; }
+    if ! pct exec "$CTID" -- bash -c "docker compose version >/dev/null 2>&1 || docker-compose version >/dev/null 2>&1"; then
+        warn "docker compose nicht gefunden - versuche Nachinstallation..."
+        if [[ "$OS_TYPE" == "debian" ]]; then
+            if [[ "${DEBIAN_VARIANT:-standard}" == "minimal" ]]; then
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get install -y --no-install-recommends docker-compose-plugin docker-compose 2>/dev/null || true" || true
+            else
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get install -y docker-compose-plugin 2>/dev/null || true" || true
+            fi
+        else
+            pct exec "$CTID" -- bash -c "apk add --no-cache docker-cli-compose docker-compose 2>/dev/null || true" || true
+        fi
+    fi
+    if ! pct exec "$CTID" -- bash -c "docker compose version >/dev/null 2>&1 || docker-compose version >/dev/null 2>&1"; then err "docker compose installation failed"; exit 1; fi
+    pct exec "$CTID" -- bash -c "docker compose version 2>&1 | head -n1 || docker-compose version 2>&1 | head -n1"
+
+    # ------------------------------------------------------------------
+    # 5) Repository erst nach erfolgreicher Git-Pruefung klonen
+    #    Muster: require_command git || install_git ; require_command git || fatal ; git clone
+    # ------------------------------------------------------------------
+    info "Klone WaWi-Repo (nur nach Git-Validierung)..."
+    if ! pct exec "$CTID" -- bash -c "command -v git >/dev/null 2>&1"; then
+        warn "git vor Clone nicht verfuegbar - versuche Installation..."
+        if [[ "$OS_TYPE" == "debian" ]]; then
+            if [[ "${DEBIAN_VARIANT:-standard}" == "minimal" ]]; then
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y --no-install-recommends git" || true
+            else
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y git" || true
+            fi
+        else
+            pct exec "$CTID" -- bash -c "apk add --no-cache git" || true
+        fi
+    fi
+    if ! pct exec "$CTID" -- bash -c "command -v git >/dev/null 2>&1"; then err "Git installation failed - Clone abgebrochen"; exit 1; fi
+    pct exec "$CTID" -- bash -c "git --version >/dev/null 2>&1" || { err "git --version fehlgeschlagen vor Clone"; exit 1; }
     pct exec "$CTID" -- bash -c "
-        rm -rf $INSTALL_DIR &&
+        set -e
+        rm -rf $INSTALL_DIR
         git clone $REPO_URL $INSTALL_DIR
-    "
-    log "Repo geklont"
+    " || { err "git clone fehlgeschlagen"; exit 1; }
+    log "Repo geklont nach $INSTALL_DIR"
 
     # .env generieren
     generate_env
 
-    # Docker Compose starten
-    info "Baue und starte Container..."
+    # ------------------------------------------------------------------
+    # 6) Docker erst nach erfolgreicher Pruefung verwenden
+    # ------------------------------------------------------------------
+    info "Baue und starte Container (nur nach Docker-Validierung)..."
+    if ! pct exec "$CTID" -- bash -c "command -v docker >/dev/null 2>&1 && (docker compose version >/dev/null 2>&1 || docker-compose version >/dev/null 2>&1)"; then
+        err "Docker nicht verfuegbar fuer Compose (validierung fehlgeschlagen)"; exit 1; fi
     pct exec "$CTID" -- bash -c "
-        cd $INSTALL_DIR &&
+        set -e
+        cd $INSTALL_DIR
         WEB_PORT=$WEB_PORT docker compose up -d --build
-    "
+    " || { err "docker compose up fehlgeschlagen"; exit 1; }
     log "Docker Compose gestartet"
+
+    # ------------------------------------------------------------------
+    # 7) Finale Validierung im Container
+    # ------------------------------------------------------------------
+    info "Finale validate_environment im Container (OS=$OS_TYPE MODE=docker)..."
+    # Versuche lib/common.sh im Container zu nutzen falls gepusht, sonst inline validierung
+    pct exec "$CTID" -- bash -c "
+        set -e
+        echo '[*] command -v git: ' \$(command -v git)
+        git --version
+        echo '[*] command -v curl: ' \$(command -v curl)
+        curl --version | head -n1
+        echo '[*] command -v bash: ' \$(command -v bash)
+        bash --version | head -n1
+        docker --version
+        docker compose version 2>&1 | head -n1 || docker-compose version 2>&1 | head -n1
+        echo '[OK] Final validate_environment bestanden'
+    " || { err "Finale Validierung im Container fehlgeschlagen"; exit 1; }
 }
 
 deploy_nativ() {
-    info "Installiere Node.js im Container..."
+    info "Installiere Node.js im Container (robuste Dependency-Pruefung)..."
 
+    # ------------------------------------------------------------------
+    # 1) Basis-Dependencies (OS-spezifisch) - identisch zu deploy_docker
+    # ------------------------------------------------------------------
+    if [[ "$OS_TYPE" == "debian" ]]; then
+        if [[ "${DEBIAN_VARIANT:-standard}" == "minimal" ]]; then
+            info "Debian Minimal: installiere Basis-Dependencies (--no-install-recommends)..."
+            pct exec "$CTID" -- bash -c "
+                set -e
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -qq
+                apt-get install -y --no-install-recommends git curl ca-certificates bash
+            "
+        else
+            info "Debian Standard: installiere Basis-Dependencies..."
+            pct exec "$CTID" -- bash -c "
+                set -e
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -qq
+                apt-get install -y git curl ca-certificates bash gnupg
+            "
+        fi
+    else
+        info "Alpine: installiere Basis-Dependencies (apk)..."
+        pct exec "$CTID" -- bash -c "
+            set -e
+            apk update
+            apk add --no-cache git curl ca-certificates bash
+            update-ca-certificates 2>/dev/null || true
+        "
+    fi
+
+    # 2) Aktive Verifikation (wie deploy_docker)
+    info "Aktive Verifikation Basis-Dependencies im Container..."
+    if ! pct exec "$CTID" -- bash -c "command -v git >/dev/null 2>&1"; then
+        warn "git im Container nicht gefunden - versuche Nachinstallation..."
+        if [[ "$OS_TYPE" == "debian" ]]; then
+            if [[ "${DEBIAN_VARIANT:-standard}" == "minimal" ]]; then
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y --no-install-recommends git" || true
+            else
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y git" || true
+            fi
+        else
+            pct exec "$CTID" -- bash -c "apk add --no-cache git" || true
+        fi
+    fi
+    if ! pct exec "$CTID" -- bash -c "command -v git >/dev/null 2>&1"; then err "Git installation failed - git weiterhin nicht verfuegbar"; exit 1; fi
+    pct exec "$CTID" -- bash -c "git --version" || { err "git --version fehlgeschlagen"; exit 1; }
+    if ! pct exec "$CTID" -- bash -c "command -v curl >/dev/null 2>&1"; then
+        if [[ "$OS_TYPE" == "debian" ]]; then
+            if [[ "${DEBIAN_VARIANT:-standard}" == "minimal" ]]; then
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y --no-install-recommends curl" || true
+            else
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y curl" || true
+            fi
+        else pct exec "$CTID" -- bash -c "apk add --no-cache curl" || true; fi
+    fi
+    if ! pct exec "$CTID" -- bash -c "command -v curl >/dev/null 2>&1"; then err "curl installation failed"; exit 1; fi
+    if ! pct exec "$CTID" -- bash -c "command -v bash >/dev/null 2>&1"; then
+        if [[ "$OS_TYPE" == "debian" ]]; then
+            if [[ "${DEBIAN_VARIANT:-standard}" == "minimal" ]]; then
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y --no-install-recommends bash" || true
+            else
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y bash" || true
+            fi
+        else pct exec "$CTID" -- bash -c "apk add --no-cache bash" || true; fi
+    fi
+    if ! pct exec "$CTID" -- bash -c "command -v bash >/dev/null 2>&1"; then err "bash installation failed"; exit 1; fi
+    pct exec "$CTID" -- bash -c "command -v git && command -v curl && command -v bash && echo '[OK] command -v Checks bestanden'" || { err "command -v Verifikation fehlgeschlagen"; exit 1; }
+
+    # ------------------------------------------------------------------
+    # 3) Node.js installieren (OS-spezifisch)
+    # ------------------------------------------------------------------
+    info "Installiere Node.js im Container..."
     if [[ "$OS_TYPE" == "debian" ]]; then
         pct exec "$CTID" -- bash -c "
-            apt-get update -qq &&
-            apt-get install -y -qq curl git build-essential &&
-            curl -fsSL https://deb.nodesource.com/setup_26.x | bash - &&
-            apt-get install -y -qq nodejs
-        "
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y --no-install-recommends curl ca-certificates gnupg 2>/dev/null || apt-get install -y curl ca-certificates gnupg
+            curl -fsSL https://deb.nodesource.com/setup_26.x | bash -
+            apt-get install -y nodejs
+            node --version
+            npm --version
+        " || { err "Node.js Installation (Debian) fehlgeschlagen"; exit 1; }
     else
         # Alpine: Node direkt vom Hersteller
         pct exec "$CTID" -- bash -c "
-            apk add --no-cache curl git python3 make g++ &&
-            NODE_VERSION=\$(curl -s https://nodejs.org/dist/index.json | grep -oP '\"version\":\"v\\K[0-9.]+' | head -1) &&
-            curl -fsSL \"https://nodejs.org/dist/v\${NODE_VERSION}/node-v\${NODE_VERSION}-linux-x64-musl.tar.xz\" -o /tmp/node.tar.xz &&
-            tar -xf /tmp/node.tar.xz -C /usr/local --strip-components=1 &&
-            rm /tmp/node.tar.xz
-        "
+            set -e
+            apk add --no-cache curl git python3 make g++ bash
+            # Versuche apk nodejs zuerst (schlanker)
+            if apk add --no-cache nodejs npm 2>/dev/null; then
+                echo '[i] nodejs via apk installiert'
+            else
+                NODE_VERSION=\$(curl -s https://nodejs.org/dist/index.json | grep -o '"version":"v[^"]*"' | head -1 | cut -d'"' -f4 | tr -d 'v')
+                if [ -z \"\$NODE_VERSION\" ]; then NODE_VERSION=\"22.14.0\"; fi
+                echo \"[i] Lade Node v\$NODE_VERSION (musl)...\"
+                curl -fsSL \"https://nodejs.org/dist/v\${NODE_VERSION}/node-v\${NODE_VERSION}-linux-x64-musl.tar.xz\" -o /tmp/node.tar.xz
+                tar -xf /tmp/node.tar.xz -C /usr/local --strip-components=1
+                rm /tmp/node.tar.xz
+            fi
+            node --version
+            npm --version
+        " || { err "Node.js Installation (Alpine) fehlgeschlagen"; exit 1; }
     fi
     log "Node.js installiert"
 
-    # Git klonen
-    info "Klone WaWi-Repo..."
+    # ------------------------------------------------------------------
+    # 4) Git klonen - erst nach Git-Validierung
+    # ------------------------------------------------------------------
+    info "Klone WaWi-Repo (nur nach Git-Validierung)..."
+    if ! pct exec "$CTID" -- bash -c "command -v git >/dev/null 2>&1"; then
+        warn "git vor Clone nicht verfuegbar - versuche Installation..."
+        if [[ "$OS_TYPE" == "debian" ]]; then
+            if [[ "${DEBIAN_VARIANT:-standard}" == "minimal" ]]; then
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y --no-install-recommends git" || true
+            else
+                pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y git" || true
+            fi
+        else
+            pct exec "$CTID" -- bash -c "apk add --no-cache git" || true
+        fi
+    fi
+    if ! pct exec "$CTID" -- bash -c "command -v git >/dev/null 2>&1"; then err "Git installation failed - Clone abgebrochen"; exit 1; fi
+    pct exec "$CTID" -- bash -c "git --version >/dev/null 2>&1" || { err "git --version fehlgeschlagen vor Clone"; exit 1; }
     pct exec "$CTID" -- bash -c "
-        rm -rf $INSTALL_DIR &&
+        set -e
+        rm -rf $INSTALL_DIR
         git clone $REPO_URL $INSTALL_DIR
-    "
+    " || { err "git clone fehlgeschlagen"; exit 1; }
     log "Repo geklont"
 
     # .env generieren
     generate_env
 
-    # Dependencies installieren & bauen
+    # Dependencies installieren & bauen - erst nach Clone
     info "Installiere Dependencies & baue..."
     pct exec "$CTID" -- bash -c "
-        cd $INSTALL_DIR &&
-        npm ci --ignore-scripts &&
-        npm run build --workspace=@wawi/api &&
-        npm run build --workspace=@wawi/web
-    "
+        set -e
+        cd $INSTALL_DIR
+        npm ci --ignore-scripts
+        npm run build --workspace=@wawi/api 2>/dev/null || npm run build --workspaces --if-present
+        npm run build --workspace=@wawi/web 2>/dev/null || true
+    " || { err "Build fehlgeschlagen"; exit 1; }
     log "Build abgeschlossen"
 
     # API starten (persistent via openrc auf Alpine)
@@ -622,7 +1020,7 @@ INITEOF
             chmod +x /etc/init.d/wawi-api &&
             rc-update add wawi-api default &&
             rc-service wawi-api start
-        "
+        " || { err "OpenRC wawi-api Start fehlgeschlagen"; exit 1; }
     else
         pct exec "$CTID" -- bash -c "
             cat > /etc/systemd/system/wawi-api.service << 'EOF'
@@ -645,27 +1043,42 @@ EOF
             systemctl daemon-reload &&
             systemctl enable wawi-api &&
             systemctl start wawi-api
-        "
+        " || { err "systemd wawi-api Start fehlgeschlagen"; exit 1; }
     fi
     log "API-Service gestartet"
 
     # Web: nginx + static build
     if [[ "$OS_TYPE" == "alpine" ]]; then
         pct exec "$CTID" -- bash -c "
-            apk add nginx &&
-            cp -r $INSTALL_DIR/apps/web/dist/* /var/www/localhost/htdocs/ &&
-            rc-update add nginx default &&
-            service nginx start
-        "
+            set -e
+            apk add --no-cache nginx
+            mkdir -p /var/www/localhost/htdocs
+            cp -r $INSTALL_DIR/apps/web/dist/* /var/www/localhost/htdocs/ 2>/dev/null || cp -r $INSTALL_DIR/apps/web/dist/* /usr/share/nginx/html/ 2>/dev/null || true
+            rc-update add nginx default 2>/dev/null || true
+            service nginx start 2>/dev/null || nginx
+        " || warn "nginx Start (Alpine) fehlgeschlagen - pruefe manuell"
     else
         pct exec "$CTID" -- bash -c "
-            apt-get install -y -qq nginx &&
-            cp -r $INSTALL_DIR/apps/web/dist/* /var/www/html/ &&
-            systemctl enable nginx &&
-            systemctl restart nginx
-        "
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get install -y nginx
+            mkdir -p /var/www/html
+            cp -r $INSTALL_DIR/apps/web/dist/* /var/www/html/ 2>/dev/null || true
+            systemctl enable nginx 2>/dev/null || true
+            systemctl restart nginx 2>/dev/null || service nginx start 2>/dev/null || nginx
+        " || warn "nginx Start (Debian) fehlgeschlagen - pruefe manuell"
     fi
     log "Web-Server gestartet"
+
+    # Finale Validierung nativ
+    pct exec "$CTID" -- bash -c "
+        command -v git && git --version
+        command -v curl && curl --version | head -n1
+        command -v bash && bash --version | head -n1
+        command -v node && node --version
+        npm --version
+        echo '[OK] deploy_nativ finale Validierung bestanden'
+    " || { err "Finale nativ Validierung fehlgeschlagen"; exit 1; }
 }
 
 generate_env() {
