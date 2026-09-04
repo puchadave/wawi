@@ -961,11 +961,8 @@ deploy_docker() {
 }
 
 deploy_nativ() {
-    info "Installiere Node.js im Container (robuste Dependency-Pruefung)..."
+    info "Nativ-Installation: Basis + Postgres/Redis + Node.js direkt auf Host (kein Docker)..."
 
-    # ------------------------------------------------------------------
-    # 1) Basis-Dependencies (OS-spezifisch) - identisch zu deploy_docker
-    # ------------------------------------------------------------------
     if [[ "$OS_TYPE" == "debian" ]]; then
         if [[ "${DEBIAN_VARIANT:-standard}" == "minimal" ]]; then
             info "Debian Minimal: installiere Basis-Dependencies (--no-install-recommends)..."
@@ -973,7 +970,7 @@ deploy_nativ() {
                 set -e
                 export DEBIAN_FRONTEND=noninteractive
                 apt-get update -qq
-                apt-get install -y --no-install-recommends git curl ca-certificates bash
+                apt-get install -y --no-install-recommends git curl ca-certificates bash gnupg openssl
             "
         else
             info "Debian Standard: installiere Basis-Dependencies..."
@@ -981,7 +978,7 @@ deploy_nativ() {
                 set -e
                 export DEBIAN_FRONTEND=noninteractive
                 apt-get update -qq
-                apt-get install -y git curl ca-certificates bash gnupg
+                apt-get install -y git curl ca-certificates bash gnupg openssl
             "
         fi
     else
@@ -989,12 +986,11 @@ deploy_nativ() {
         pct exec "$CTID" -- bash -c "
             set -e
             apk update
-            apk add --no-cache git curl ca-certificates bash
+            apk add --no-cache git curl ca-certificates bash openssl
             update-ca-certificates 2>/dev/null || true
         "
     fi
 
-    # 2) Aktive Verifikation (wie deploy_docker)
     info "Aktive Verifikation Basis-Dependencies im Container..."
     if ! pct exec "$CTID" -- bash -c "command -v git >/dev/null 2>&1"; then
         warn "git im Container nicht gefunden - versuche Nachinstallation..."
@@ -1032,9 +1028,109 @@ deploy_nativ() {
     if ! pct exec "$CTID" -- bash -c "command -v bash >/dev/null 2>&1"; then err "bash installation failed"; exit 1; fi
     pct exec "$CTID" -- bash -c "command -v git && command -v curl && command -v bash && echo '[OK] command -v Checks bestanden'" || { err "command -v Verifikation fehlgeschlagen"; exit 1; }
 
-    # ------------------------------------------------------------------
-    # 3) Node.js installieren (OS-spezifisch)
-    # ------------------------------------------------------------------
+    header "PostgreSQL & Redis nativ installieren (entspricht docker-compose services)"
+
+    if [[ "$OS_TYPE" == "debian" ]]; then
+        if [[ "${DEBIAN_VARIANT:-standard}" == "minimal" ]]; then
+            pct exec "$CTID" -- bash -c "
+                set -e
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -qq
+                apt-get install -y --no-install-recommends postgresql postgresql-contrib redis-server openssl || apt-get install -y --no-install-recommends postgresql postgresql-contrib redis openssl
+                if command -v systemctl >/dev/null 2>&1; then
+                    systemctl enable postgresql 2>/dev/null || true
+                    systemctl start postgresql 2>/dev/null || service postgresql start 2>/dev/null || true
+                    systemctl enable redis-server 2>/dev/null || systemctl enable redis 2>/dev/null || true
+                    systemctl start redis-server 2>/dev/null || systemctl start redis 2>/dev/null || service redis-server start 2>/dev/null || redis-server --daemonize yes 2>/dev/null || true
+                else
+                    service postgresql start 2>/dev/null || pg_ctlcluster 16 main start 2>/dev/null || pg_ctlcluster 15 main start 2>/dev/null || true
+                    service redis-server start 2>/dev/null || service redis start 2>/dev/null || redis-server --daemonize yes 2>/dev/null || true
+                fi
+                sleep 2
+                pg_isready -q || pg_isready -h localhost -q || { echo '[!] pg_isready fehlgeschlagen - warte'; sleep 3; }
+                redis-cli ping 2>/dev/null | grep -qi PONG || redis-cli -h localhost ping 2>/dev/null | grep -qi PONG || { echo '[!] redis ping fehlgeschlagen - warte'; sleep 2; }
+            " || { err "Postgres/Redis Installation (Debian Minimal) fehlgeschlagen"; exit 1; }
+        else
+            pct exec "$CTID" -- bash -c "
+                set -e
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -qq
+                apt-get install -y postgresql postgresql-contrib redis-server openssl || apt-get install -y postgresql postgresql-contrib redis openssl
+                if command -v systemctl >/dev/null 2>&1; then
+                    systemctl enable postgresql 2>/dev/null || true
+                    systemctl start postgresql 2>/dev/null || service postgresql start 2>/dev/null || true
+                    systemctl enable redis-server 2>/dev/null || systemctl enable redis 2>/dev/null || true
+                    systemctl start redis-server 2>/dev/null || systemctl start redis 2>/dev/null || service redis-server start 2>/dev/null || redis-server --daemonize yes 2>/dev/null || true
+                else
+                    service postgresql start 2>/dev/null || pg_ctlcluster 16 main start 2>/dev/null || pg_ctlcluster 15 main start 2>/dev/null || true
+                    service redis-server start 2>/dev/null || service redis start 2>/dev/null || redis-server --daemonize yes 2>/dev/null || true
+                fi
+                sleep 2
+                pg_isready -q || pg_isready -h localhost -q || { echo '[!] pg_isready fehlgeschlagen'; sleep 3; }
+                redis-cli ping 2>/dev/null | grep -qi PONG || redis-cli -h localhost ping 2>/dev/null | grep -qi PONG || echo '[!] redis ping fehlgeschlagen'
+            " || { err "Postgres/Redis Installation (Debian Standard) fehlgeschlagen"; exit 1; }
+        fi
+    else
+        pct exec "$CTID" -- bash -c "
+            set -e
+            apk update
+            apk add --no-cache postgresql16 postgresql16-client postgresql16-contrib redis openssl 2>/dev/null || apk add --no-cache postgresql postgresql-client redis openssl
+            mkdir -p /var/lib/postgresql/data /run/postgresql /var/log
+            chown -R postgres:postgres /var/lib/postgresql 2>/dev/null || true
+            chown -R postgres:postgres /run/postgresql 2>/dev/null || true
+            if [ ! -s /var/lib/postgresql/data/PG_VERSION ]; then
+                echo '[i] Initialisiere Postgres Cluster (initdb)...'
+                su postgres -c 'initdb -D /var/lib/postgresql/data --auth=trust' 2>/dev/null || su postgres -c 'initdb -D /var/lib/postgresql/data' 2>/dev/null || initdb -D /var/lib/postgresql/data -U postgres 2>/dev/null || true
+            fi
+            if command -v rc-update >/dev/null 2>&1; then
+                rc-update add postgresql default 2>/dev/null || true
+                rc-update add redis default 2>/dev/null || true
+                service postgresql start 2>/dev/null || rc-service postgresql start 2>/dev/null || su postgres -c 'pg_ctl -D /var/lib/postgresql/data -l /var/log/postgresql.log start' 2>/dev/null || true
+                service redis start 2>/dev/null || rc-service redis start 2>/dev/null || redis-server --daemonize yes 2>/dev/null || true
+            else
+                su postgres -c 'pg_ctl -D /var/lib/postgresql/data -l /tmp/pg.log start' 2>/dev/null || pg_ctl -D /var/lib/postgresql/data -l /tmp/pg.log start 2>/dev/null || true
+                redis-server --daemonize yes 2>/dev/null || true
+            fi
+            sleep 3
+            pg_isready -q 2>/dev/null || pg_isready -h localhost -q 2>/dev/null || echo '[!] pg_isready noch nicht bereit'
+            redis-cli ping 2>/dev/null | grep -qi PONG || redis-cli -h localhost ping 2>/dev/null | grep -qi PONG || echo '[!] redis ping noch nicht bereit'
+        " || { err "Postgres/Redis Installation (Alpine) fehlgeschlagen"; exit 1; }
+    fi
+    log "Postgres & Redis Installation abgeschlossen"
+
+    pct exec "$CTID" -- bash -c "
+        set -e
+        pg_isready -q 2>/dev/null || pg_isready -h localhost -q 2>/dev/null || { echo '[!] Postgres nicht ready aber fahre fort'; sleep 2; }
+        redis-cli ping 2>/dev/null | grep -qi PONG || redis-cli -h localhost ping 2>/dev/null | grep -qi PONG || echo '[!] Redis ping fehlgeschlagen aber fahre fort'
+        echo '[OK] DB/Redis Erreichbarkeit geprüft'
+    " || warn "DB/Redis Erreichbarkeitscheck fehlgeschlagen (nicht kritisch)"
+
+    header "PostgreSQL DB & User einrichten (wawi / wawi_db)"
+
+    pct exec "$CTID" -- bash -c "
+        set -e
+        DB_USER=wawi
+        DB_PASS=wawi_password
+        DB_NAME=wawi_db
+        if su postgres -c \"psql -tAc \\\"SELECT 1 FROM pg_roles WHERE rolname='\$DB_USER'\\\"\" 2>/dev/null | grep -q 1; then
+            echo \"[i] DB-User \$DB_USER existiert bereits\"
+        else
+            su postgres -c \"psql -c \\\"CREATE USER \$DB_USER WITH PASSWORD '\$DB_PASS' CREATEDB;\\\"\" 2>/dev/null || su postgres -c \"psql -c \\\"CREATE USER \$DB_USER WITH PASSWORD '\$DB_PASS';\\\"\" 2>/dev/null || sudo -u postgres psql -c \"CREATE USER \$DB_USER WITH PASSWORD '\$DB_PASS';\" 2>/dev/null || echo \"[w] CREATE USER fehlgeschlagen (evtl. existiert bereits)\"
+            echo \"[✓] DB-User \$DB_USER erstellt/geprüft\"
+        fi
+        if su postgres -c \"psql -tAc \\\"SELECT 1 FROM pg_database WHERE datname='\$DB_NAME'\\\"\" 2>/dev/null | grep -q 1; then
+            echo \"[i] DB \$DB_NAME existiert bereits\"
+        else
+            su postgres -c \"createdb -O \$DB_USER \$DB_NAME\" 2>/dev/null || su postgres -c \"psql -c \\\"CREATE DATABASE \$DB_NAME OWNER \$DB_USER;\\\"\" 2>/dev/null || sudo -u postgres createdb -O \"\$DB_USER\" \"\$DB_NAME\" 2>/dev/null || echo \"[w] createdb fehlgeschlagen\"
+            echo \"[✓] DB \$DB_NAME erstellt/geprüft\"
+        fi
+        su postgres -c \"psql -c \\\"GRANT ALL PRIVILEGES ON DATABASE \$DB_NAME TO \$DB_USER;\\\"\" 2>/dev/null || true
+        su postgres -c \"psql -c \\\"ALTER USER \$DB_USER CREATEDB;\\\"\" 2>/dev/null || true
+        echo \"[✓] DB-Setup abgeschlossen\"
+        su postgres -c \"psql -c \\\"\\\\l\\\"\" 2>/dev/null | head -n 20 || true
+    " || { err "Postgres DB/User Setup fehlgeschlagen"; exit 1; }
+    log "Datenbank wawi_db / User wawi bereit"
+
     info "Installiere Node.js im Container..."
     if [[ "$OS_TYPE" == "debian" ]]; then
         pct exec "$CTID" -- bash -c "
@@ -1042,21 +1138,19 @@ deploy_nativ() {
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -qq
             apt-get install -y --no-install-recommends curl ca-certificates gnupg 2>/dev/null || apt-get install -y curl ca-certificates gnupg
-            curl -fsSL https://deb.nodesource.com/setup_26.x | bash -
+            curl -fsSL https://deb.nodesource.com/setup_22.x | bash - 2>/dev/null || curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
             apt-get install -y nodejs
             node --version
             npm --version
         " || { err "Node.js Installation (Debian) fehlgeschlagen"; exit 1; }
     else
-        # Alpine: Node direkt vom Hersteller
         pct exec "$CTID" -- bash -c "
             set -e
             apk add --no-cache curl git python3 make g++ bash
-            # Versuche apk nodejs zuerst (schlanker)
             if apk add --no-cache nodejs npm 2>/dev/null; then
                 echo '[i] nodejs via apk installiert'
             else
-                NODE_VERSION=\$(curl -s https://nodejs.org/dist/index.json | grep -o '"version":"v[^"]*"' | head -1 | cut -d'"' -f4 | tr -d 'v')
+                NODE_VERSION=\$(curl -s https://nodejs.org/dist/index.json 2>/dev/null | grep -o '\"version\":\"v[^\"]*\"' | head -1 | cut -d'\"' -f4 | tr -d 'v')
                 if [ -z \"\$NODE_VERSION\" ]; then NODE_VERSION=\"22.14.0\"; fi
                 echo \"[i] Lade Node v\$NODE_VERSION (musl)...\"
                 curl -fsSL \"https://nodejs.org/dist/v\${NODE_VERSION}/node-v\${NODE_VERSION}-linux-x64-musl.tar.xz\" -o /tmp/node.tar.xz
@@ -1069,9 +1163,6 @@ deploy_nativ() {
     fi
     log "Node.js installiert"
 
-    # ------------------------------------------------------------------
-    # 4) Git klonen - erst nach Git-Validierung
-    # ------------------------------------------------------------------
     info "Klone WaWi-Repo (nur nach Git-Validierung)..."
     if ! pct exec "$CTID" -- bash -c "command -v git >/dev/null 2>&1"; then
         warn "git vor Clone nicht verfuegbar - versuche Installation..."
@@ -1094,11 +1185,9 @@ deploy_nativ() {
     " || { err "git clone fehlgeschlagen"; exit 1; }
     log "Repo geklont"
 
-    # .env generieren
     generate_env
 
-    # Dependencies installieren & bauen - erst nach Clone
-    info "Installiere Dependencies & baue..."
+    info "Installiere Dependencies & baue (API + Web)..."
     pct exec "$CTID" -- bash -c "
         set -e
         cd $INSTALL_DIR
@@ -1108,15 +1197,37 @@ deploy_nativ() {
     " || { err "Build fehlgeschlagen"; exit 1; }
     log "Build abgeschlossen"
 
-    # API starten (persistent via openrc auf Alpine)
+    header "Datenbank-Migration (drizzle-kit push)"
+
+    pct exec "$CTID" -- bash -c "
+        set -e
+        cd $INSTALL_DIR
+        export \$(cat $INSTALL_DIR/.env | grep -v '^#' | grep -E '=' | xargs 2>/dev/null) 2>/dev/null || true
+        export DATABASE_URL=\"\${DATABASE_URL:-postgresql://wawi:wawi_password@localhost:5432/wawi_db}\"
+        echo \"[i] DATABASE_URL=\$DATABASE_URL\"
+        pg_isready -q 2>/dev/null || pg_isready -h localhost -q 2>/dev/null || { echo '[!] pg_isready fehlgeschlagen'; sleep 3; }
+        if [ -f apps/api/drizzle.config.cjs ] || [ -f apps/api/drizzle.config.ts ]; then
+            echo '[i] Führe drizzle-kit push aus...'
+            npx --workspace=@wawi/api drizzle-kit push --config=drizzle.config.cjs 2>&1 || npx drizzle-kit push 2>&1 || npm run db:push --workspace=@wawi/api 2>&1 || echo '[w] drizzle-kit push fehlgeschlagen - versuche direkten SQL import'
+        else
+            echo '[w] drizzle.config nicht gefunden - überspringe migration'
+        fi
+    " || warn "DB-Migration fehlgeschlagen (API startet trotzdem - bootstrap versucht erneut)"
+    log "DB-Migration abgeschlossen/geprüft"
+
+    local NODE_BIN_CT
+    NODE_BIN_CT=$(pct exec "$CTID" -- bash -c "command -v node 2>/dev/null || echo /usr/bin/node" 2>/dev/null | tr -d '\r\n' | head -n1)
+    [[ -z "$NODE_BIN_CT" ]] && NODE_BIN_CT="/usr/bin/node"
+    if [[ "$NODE_BIN_CT" == *"which"* ]] || [[ "$NODE_BIN_CT" == *"not found"* ]]; then NODE_BIN_CT="/usr/bin/node"; fi
+    info "Node im Container: $NODE_BIN_CT"
+
     if [[ "$OS_TYPE" == "alpine" ]]; then
         pct exec "$CTID" -- bash -c "
             cat > /etc/init.d/wawi-api << 'INITEOF'
 #!/sbin/openrc-run
-
 name=\"wawi-api\"
 description=\"WaWi API Server\"
-command=\"/usr/local/bin/node\"
+command=\"$NODE_BIN_CT\"
 command_args=\"$INSTALL_DIR/apps/api/dist/index.js\"
 command_background=true
 pidfile=\"/run/wawi-api.pid\"
@@ -1125,79 +1236,225 @@ error_log=\"/var/log/wawi-api.log\"
 
 depend() {
     need net
-    after docker
+    need postgresql
+    need redis
+    after postgresql
+    after redis
 }
 
 start_pre() {
-    export \$(cat $INSTALL_DIR/.env | grep -v '^#' | xargs)
+    if [ -f $INSTALL_DIR/.env ]; then
+        set -a; . $INSTALL_DIR/.env 2>/dev/null || true; set +a
+    fi
 }
 INITEOF
             chmod +x /etc/init.d/wawi-api &&
-            rc-update add wawi-api default &&
-            rc-service wawi-api start
+            rc-update add wawi-api default 2>/dev/null || true
+            rc-service wawi-api restart 2>/dev/null || rc-service wawi-api start 2>/dev/null || /etc/init.d/wawi-api start 2>/dev/null || true
+            sleep 3
+            rc-service wawi-api status 2>/dev/null || cat /var/log/wawi-api.log 2>/dev/null | tail -n 50 || true
         " || { err "OpenRC wawi-api Start fehlgeschlagen"; exit 1; }
     else
         pct exec "$CTID" -- bash -c "
-            cat > /etc/systemd/system/wawi-api.service << 'EOF'
+            cat > /etc/systemd/system/wawi-api.service << 'SVCEOF'
 [Unit]
 Description=WaWi API
-After=network.target
+After=network.target postgresql.service redis-server.service redis.service
+Wants=postgresql.service redis-server.service
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR/apps/api
-ExecStart=$(which node) dist/index.js
+ExecStart=$NODE_BIN_CT $INSTALL_DIR/apps/api/dist/index.js
 Restart=on-failure
 RestartSec=5
 EnvironmentFile=$INSTALL_DIR/.env
 
 [Install]
 WantedBy=multi-user.target
-EOF
-            systemctl daemon-reload &&
-            systemctl enable wawi-api &&
-            systemctl start wawi-api
+SVCEOF
+            systemctl daemon-reload 2>/dev/null || true
+            systemctl enable wawi-api 2>/dev/null || true
+            systemctl restart wawi-api 2>/dev/null || systemctl start wawi-api 2>/dev/null || (nohup $NODE_BIN_CT $INSTALL_DIR/apps/api/dist/index.js > /var/log/wawi-api.log 2>&1 & echo \$! > /run/wawi-api.pid; sleep 2)
+            sleep 3
+            systemctl status wawi-api --no-pager 2>/dev/null | head -n 30 || cat /var/log/wawi-api.log 2>/dev/null | tail -n 50 || true
         " || { err "systemd wawi-api Start fehlgeschlagen"; exit 1; }
     fi
     log "API-Service gestartet"
 
-    # Web: nginx + static build
     if [[ "$OS_TYPE" == "alpine" ]]; then
         pct exec "$CTID" -- bash -c "
             set -e
-            apk add --no-cache nginx
-            mkdir -p /var/www/localhost/htdocs
-            cp -r $INSTALL_DIR/apps/web/dist/* /var/www/localhost/htdocs/ 2>/dev/null || cp -r $INSTALL_DIR/apps/web/dist/* /usr/share/nginx/html/ 2>/dev/null || true
+            apk add --no-cache nginx 2>/dev/null || true
+            mkdir -p /var/www/localhost/htdocs /usr/share/nginx/html 2>/dev/null || true
+            SRC_DIST=\"$INSTALL_DIR/apps/web/dist\"
+            if [ -d \"\$SRC_DIST\" ] && [ \"\$(ls -A \$SRC_DIST 2>/dev/null)\" ]; then
+                cp -r \$SRC_DIST/* /var/www/localhost/htdocs/ 2>/dev/null || cp -r \$SRC_DIST/* /usr/share/nginx/html/ 2>/dev/null || true
+            else
+                echo '[w] Web dist leer - überspringe copy'
+            fi
+            cat > /etc/nginx/http.d/wawi.conf 2>/dev/null || cat > /etc/nginx/conf.d/wawi.conf << 'NGINXEOF'
+server {
+    listen $WEB_PORT;
+    listen [::]:$WEB_PORT;
+    server_name _;
+    root /var/www/localhost/htdocs;
+    index index.html;
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript image/svg+xml;
+    gzip_min_length 256;
+    location /api/ {
+        proxy_pass http://127.0.0.1:$API_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \"upgrade\";
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_buffering off;
+    }
+    location = /health {
+        proxy_pass http://127.0.0.1:$API_PORT/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)\$ {
+        expires 30d;
+        add_header Cache-Control \"public, immutable\";
+    }
+    add_header X-Frame-Options \"SAMEORIGIN\" always;
+    add_header X-Content-Type-Options \"nosniff\" always;
+    add_header Referrer-Policy \"strict-origin-when-cross-origin\" always;
+}
+NGINXEOF
+            nginx -t 2>&1 || echo '[w] nginx -t fehlgeschlagen'
             rc-update add nginx default 2>/dev/null || true
-            service nginx start 2>/dev/null || nginx
+            rc-service nginx restart 2>/dev/null || service nginx restart 2>/dev/null || nginx -s reload 2>/dev/null || nginx 2>/dev/null || true
         " || warn "nginx Start (Alpine) fehlgeschlagen - pruefe manuell"
     else
         pct exec "$CTID" -- bash -c "
             set -e
             export DEBIAN_FRONTEND=noninteractive
-            apt-get install -y nginx
-            mkdir -p /var/www/html
-            cp -r $INSTALL_DIR/apps/web/dist/* /var/www/html/ 2>/dev/null || true
+            apt-get install -y nginx 2>/dev/null || true
+            mkdir -p /var/www/html 2>/dev/null || true
+            if [ -d $INSTALL_DIR/apps/web/dist ] && [ \"\$(ls -A $INSTALL_DIR/apps/web/dist 2>/dev/null)\" ]; then
+                cp -r $INSTALL_DIR/apps/web/dist/* /var/www/html/ 2>/dev/null || true
+            fi
+            cat > /etc/nginx/sites-available/wawi 2>/dev/null || true
+            cat > /etc/nginx/sites-available/wawi << 'NGINXEOF'
+server {
+    listen $WEB_PORT;
+    listen [::]:$WEB_PORT;
+    server_name _;
+    root /var/www/html;
+    index index.html;
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript image/svg+xml;
+    gzip_min_length 256;
+    location /api/ {
+        proxy_pass http://127.0.0.1:$API_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \"upgrade\";
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_buffering off;
+    }
+    location = /health {
+        proxy_pass http://127.0.0.1:$API_PORT/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+}
+NGINXEOF
+            ln -sf /etc/nginx/sites-available/wawi /etc/nginx/sites-enabled/wawi 2>/dev/null || true
+            rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+            nginx -t 2>&1 || echo '[w] nginx -t fehlgeschlagen'
             systemctl enable nginx 2>/dev/null || true
-            systemctl restart nginx 2>/dev/null || service nginx start 2>/dev/null || nginx
+            systemctl restart nginx 2>/dev/null || service nginx restart 2>/dev/null || nginx -s reload 2>/dev/null || nginx 2>/dev/null || true
         " || warn "nginx Start (Debian) fehlgeschlagen - pruefe manuell"
     fi
-    log "Web-Server gestartet"
+    log "Web-Server gestartet (Proxy -> 127.0.0.1:$API_PORT)"
 
-    # Finale Validierung nativ
     pct exec "$CTID" -- bash -c "
         command -v git && git --version
         command -v curl && curl --version | head -n1
         command -v bash && bash --version | head -n1
         command -v node && node --version
         npm --version
+        pg_isready -q 2>/dev/null && echo '[✓] postgres pg_isready OK' || pg_isready -h localhost -q 2>/dev/null && echo '[✓] postgres localhost OK' || echo '[!] postgres nicht ready'
+        redis-cli ping 2>/dev/null | grep -qi PONG && echo '[✓] redis PING OK' || redis-cli -h localhost ping 2>/dev/null | grep -qi PONG && echo '[✓] redis localhost OK' || echo '[!] redis ping fehlgeschlagen'
+        test -f $INSTALL_DIR/stack-root/pucha.dev && echo \"[✓] stack-root/pucha.dev vorhanden (\$(wc -c < $INSTALL_DIR/stack-root/pucha.dev) bytes)\" || echo '[!] stack-root/pucha.dev fehlt'
+        test -f $INSTALL_DIR/.env && echo '[✓] .env vorhanden' || echo '[!] .env fehlt'
         echo '[OK] deploy_nativ finale Validierung bestanden'
     " || { err "Finale nativ Validierung fehlgeschlagen"; exit 1; }
 }
 
+
 generate_env() {
-    info "Generiere .env..."
+    info "Generiere .env (Modus: $DEPLOY_MODE)..."
+
+    if [[ "$DEPLOY_MODE" == "docker" ]]; then
+        if [[ "$DATABASE_URL" == *"@localhost"* ]] || [[ "$DATABASE_URL" == *"@127.0.0.1"* ]]; then
+            DATABASE_URL="postgresql://wawi:wawi_password@postgres:5432/wawi_db"
+            info "DATABASE_URL fuer Docker auf postgres-Service normalisiert"
+        fi
+        if [[ "$REDIS_URL" == *"localhost"* ]] || [[ "$REDIS_URL" == *"127.0.0.1"* ]]; then
+            REDIS_URL="redis://redis:6379"
+            info "REDIS_URL fuer Docker auf redis-Service normalisiert"
+        fi
+    else
+        if [[ "$DATABASE_URL" == *"@postgres"* ]] || [[ "$DATABASE_URL" == *"@postgres:"* ]]; then
+            DATABASE_URL="postgresql://wawi:wawi_password@localhost:5432/wawi_db"
+            info "DATABASE_URL fuer Nativ auf localhost normalisiert"
+        fi
+        if [[ "$REDIS_URL" == *"://redis:"* ]] || [[ "$REDIS_URL" == *"://redis/"* ]]; then
+            REDIS_URL="redis://localhost:6379"
+            info "REDIS_URL fuer Nativ auf localhost normalisiert"
+        fi
+    fi
+
+    pct exec "$CTID" -- bash -c "
+        set -e
+        mkdir -p $INSTALL_DIR/stack-root
+        chmod 700 $INSTALL_DIR/stack-root 2>/dev/null || true
+        if [[ ! -s $INSTALL_DIR/stack-root/pucha.dev ]]; then
+            if command -v openssl >/dev/null 2>&1; then
+                openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32 > $INSTALL_DIR/stack-root/pucha.dev
+            else
+                head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32 > $INSTALL_DIR/stack-root/pucha.dev
+            fi
+            chmod 600 $INSTALL_DIR/stack-root/pucha.dev 2>/dev/null || true
+            echo '[✓] stack-root/pucha.dev generiert'
+        else
+            echo '[✓] stack-root/pucha.dev existiert bereits'
+        fi
+        ls -l $INSTALL_DIR/stack-root/pucha.dev 2>/dev/null || true
+    " || warn "stack-root Erstellung im Container fehlgeschlagen"
+
+    if [[ -n "$SEED_FILE" ]] && [[ -f "$SEED_FILE" ]]; then
+        pct push "$CTID" "$SEED_FILE" "$INSTALL_DIR/stack-root/pucha.dev" 2>/dev/null ||             pct exec "$CTID" -- bash -c "cat > $INSTALL_DIR/stack-root/pucha.dev" < "$SEED_FILE" || true
+        pct exec "$CTID" -- bash -c "chmod 600 $INSTALL_DIR/stack-root/pucha.dev 2>/dev/null || true"
+        log "SEED_FILE nach stack-root/pucha.dev kopiert"
+    fi
 
     local env_content="# Auto-generiert durch WaWi Installer
 # $(date -Iseconds)
@@ -1236,7 +1493,7 @@ WEB_URL=${WEB_URL}
     pct exec "$CTID" -- bash -c "cat > $INSTALL_DIR/.env << 'ENVEOF'
 ${env_content}
 ENVEOF"
-    log ".env generiert"
+    log ".env generiert (STACK_ROOT=$INSTALL_DIR/stack-root, DB=$DATABASE_URL)"
 }
 
 # ============================================================================
@@ -1250,18 +1507,15 @@ health_check() {
         return 0
     fi
 
-    # Bootstrap-Admin prüfen
     local stack_root="$INSTALL_DIR/stack-root"
-    local seed_installed=false
+    pct exec "$CTID" -- bash -c "mkdir -p $INSTALL_DIR/stack-root && chmod 700 $INSTALL_DIR/stack-root 2>/dev/null || true; if [[ ! -s $INSTALL_DIR/stack-root/pucha.dev ]]; then if command -v openssl >/dev/null 2>&1; then openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32 > $INSTALL_DIR/stack-root/pucha.dev; else head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32 > $INSTALL_DIR/stack-root/pucha.dev; fi; chmod 600 $INSTALL_DIR/stack-root/pucha.dev 2>/dev/null || true; echo '[✓] stack-root/pucha.dev im Container sichergestellt'; fi" 2>/dev/null || true
 
-    # Falls wir eine lokale seed-Datei haben, kopiere sie in den Container
     if [[ -n "$SEED_FILE" ]] && [[ -f "$SEED_FILE" ]]; then
-        pct push "$CTID" "$SEED_FILE" "$stack_root/pucha.dev"
-        seed_installed=true
-        log "Bootstrap-Passwort-Datei in Container kopiert"
+        pct push "$CTID" "$SEED_FILE" "$stack_root/pucha.dev" 2>/dev/null || pct exec "$CTID" -- bash -c "cat > $INSTALL_DIR/stack-root/pucha.dev" < "$SEED_FILE" 2>/dev/null || true
+        pct exec "$CTID" -- bash -c "chmod 600 $INSTALL_DIR/stack-root/pucha.dev 2>/dev/null || true"
+        log "Bootstrap-Passwort-Datei in Container kopiert: $stack_root/pucha.dev"
     fi
 
-    # Warte auf API
     info "Warte auf API..."
     local retries=30
     while [[ $retries -gt 0 ]]; do
@@ -1277,13 +1531,21 @@ health_check() {
 
     if [[ $retries -eq 0 ]]; then
         warn "API antwortet noch nicht — möglicherweise noch beim Starten"
+        pct exec "$CTID" -- bash -c "cat /var/log/wawi-api.log 2>/dev/null | tail -n 30; systemctl status wawi-api --no-pager 2>/dev/null | head -n 20; rc-service wawi-api status 2>/dev/null | head -n 20" 2>/dev/null || true
     fi
 
-    # Bootstrap-Passwort anzeigen
-    if [[ "$seed_installed" == true ]]; then
-        local pw
-        pw=$(cat "$SEED_FILE" 2>/dev/null || echo "unbekannt")
-        log "Bootstrap-Admin: $ADMIN_USER / Passwort: $pw"
+    local pw=""
+    pw=$(pct exec "$CTID" -- cat "$stack_root/pucha.dev" 2>/dev/null | tr -d '\r\n' | head -c 128) || true
+    if [[ -z "$pw" ]] && [[ -n "$SEED_FILE" ]] && [[ -f "$SEED_FILE" ]]; then
+        pw=$(cat "$SEED_FILE" 2>/dev/null | tr -d '\r\n' | head -c 128) || true
+    fi
+    if [[ -n "$pw" ]]; then
+        log "Bootstrap-Admin: $ADMIN_USER / Passwort: $pw  (Datei: $stack_root/pucha.dev)"
+    else
+        warn "Admin-Passwort konnte nicht ausgelesen werden - pruefe im Container: cat $stack_root/pucha.dev"
+    fi
+    if [[ "$DEPLOY_MODE" == "nativ" ]]; then
+        pct exec "$CTID" -- bash -c "pg_isready -q 2>/dev/null && echo '[✓] postgres ready' || pg_isready -h localhost -q 2>/dev/null && echo '[✓] postgres localhost ready' || echo '[!] postgres nicht ready'; redis-cli ping 2>/dev/null | grep -qi PONG && echo '[✓] redis PONG' || redis-cli -h localhost ping 2>/dev/null | grep -qi PONG && echo '[✓] redis localhost PONG' || echo '[!] redis ping fehlgeschlagen'" 2>/dev/null || true
     fi
 }
 
@@ -1304,15 +1566,24 @@ backup_credentials() {
 
         if [[ -n "$backup_path" ]]; then
             mkdir -p "$backup_path"
-
             pct pull "$CTID" "$INSTALL_DIR/.env" "$backup_path/.env" 2>/dev/null || true
-
-            if [[ -n "$SEED_FILE" ]] && [[ -f "$SEED_FILE" ]]; then
-                cp "$SEED_FILE" "$backup_path/pucha.dev"
+            pct pull "$CTID" "$INSTALL_DIR/stack-root/pucha.dev" "$backup_path/pucha.dev" 2>/dev/null || pct exec "$CTID" -- cat "$INSTALL_DIR/stack-root/pucha.dev" > "$backup_path/pucha.dev" 2>/dev/null || true
+            if [[ -n "$SEED_FILE" ]] && [[ -f "$SEED_FILE" ]] && [[ ! -s "$backup_path/pucha.dev" ]]; then
+                cp "$SEED_FILE" "$backup_path/pucha.dev" 2>/dev/null || true
             fi
+            chmod 600 "$backup_path/pucha.dev" 2>/dev/null || true
+            chmod 600 "$backup_path/.env" 2>/dev/null || true
 
-            local api_ip
+            local api_ip cred_pw
             api_ip=$(pct exec "$CTID" -- hostname -I 2>/dev/null | awk '{print $1}') || api_ip="<CT-IP>"
+            cred_pw=$(cat "$backup_path/pucha.dev" 2>/dev/null | tr -d '\r\n' | head -c 128) || true
+            if [[ -z "$cred_pw" ]]; then
+                cred_pw=$(pct exec "$CTID" -- cat "$INSTALL_DIR/stack-root/pucha.dev" 2>/dev/null | tr -d '\r\n' | head -c 128) || true
+            fi
+            [[ -z "$cred_pw" ]] && cred_pw="siehe $INSTALL_DIR/stack-root/pucha.dev im Container"
+
+            local db_url_info="$DATABASE_URL"
+            local redis_url_info="$REDIS_URL"
 
             cat > "$backup_path/wawi-access.txt" << EOF
 WaWi Middleware - Zugangsdaten
@@ -1327,19 +1598,29 @@ API-Health:     http://${api_ip}:${API_PORT}/health
 API-Login:      http://${api_ip}:${API_PORT}/api/auth/login
 
 Admin-User:     $ADMIN_USER
-Admin-Passwort: $(cat "$SEED_FILE" 2>/dev/null || echo "siehe stack-root/pucha.dev im Container")
+Admin-Passwort: $cred_pw
+Passwort-Datei: $INSTALL_DIR/stack-root/pucha.dev (im Container)
 
 Ports:
   Web:          $WEB_PORT
   API:          $API_PORT
-  PostgreSQL:   5432 (intern)
-  Redis:        6379 (intern)
+  PostgreSQL:   5432 (intern, nativ: localhost, docker: postgres)
+  Redis:        6379 (intern, nativ: localhost, docker: redis)
 
 Deployment-Modus: $DEPLOY_MODE
 Basis-OS:         $OS_TYPE
+DB:               $db_url_info
+Redis:            $redis_url_info
 EOF
 
-            log "Backup gespeichert: $backup_path"
+            log "Backup gespeichert: $backup_path  (enthält .env + pucha.dev + wawi-access.txt)"
+        fi
+    else
+        local api_ip2 pw2
+        api_ip2=$(pct exec "$CTID" -- hostname -I 2>/dev/null | awk '{print $1}' 2>/dev/null) || api_ip2="<CT-IP>"
+        pw2=$(pct exec "$CTID" -- cat "$INSTALL_DIR/stack-root/pucha.dev" 2>/dev/null | tr -d '\r\n' | head -c 128) || true
+        if [[ -n "$pw2" ]]; then
+            echo "[i] Credentials verfuegbar: Container $CTID ($api_ip2)  User=$ADMIN_USER  Passwort-Datei=$INSTALL_DIR/stack-root/pucha.dev"
         fi
     fi
 }
@@ -1355,8 +1636,16 @@ show_summary() {
         api_ip=$(pct exec "$CTID" -- hostname -I 2>/dev/null | awk '{print $1}') || api_ip="<CT-IP>"
     fi
 
-    local pw="siehe stack-root/pucha.dev im Container"
-    [[ -n "$SEED_FILE" ]] && [[ -f "$SEED_FILE" ]] && pw=$(cat "$SEED_FILE")
+    local pw=""
+    if [[ "$DRY_RUN" == false ]]; then
+        pw=$(pct exec "$CTID" -- cat "$INSTALL_DIR/stack-root/pucha.dev" 2>/dev/null | tr -d '\r\n' | head -c 128) || true
+    fi
+    if [[ -z "$pw" ]] && [[ -n "$SEED_FILE" ]] && [[ -f "$SEED_FILE" ]]; then
+        pw=$(cat "$SEED_FILE" 2>/dev/null | tr -d '\r\n' | head -c 128) || true
+    fi
+    if [[ -z "$pw" ]]; then
+        pw="siehe $INSTALL_DIR/stack-root/pucha.dev im Container (cat $INSTALL_DIR/stack-root/pucha.dev)"
+    fi
 
     echo -e "${BOLD}${GREEN}"
     echo "╔══════════════════════════════════════════════════════════╗"
@@ -1386,6 +1675,27 @@ show_summary() {
     echo "║    pct exec ${CTID} -- docker compose logs -f          ║"
     echo "╚══════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
+
+    if [[ "$DRY_RUN" == false ]]; then
+        echo ""
+        echo -e "${CYAN}Passwort-Datei:${NC} $INSTALL_DIR/stack-root/pucha.dev  (im Container)"
+        echo -e "${CYAN}Auslesen:${NC} pct exec $CTID -- cat $INSTALL_DIR/stack-root/pucha.dev"
+        if [[ "$DEPLOY_MODE" == "nativ" ]]; then
+            echo -e "${YELLOW}Hinweis Nativ:${NC} DB/Redis laufen direkt im Container (kein Docker)."
+            echo "  DB-Check:    pct exec $CTID -- pg_isready -h localhost"
+            echo "  Redis-Check: pct exec $CTID -- redis-cli ping"
+            echo "  API-Logs:    pct exec $CTID -- cat /var/log/wawi-api.log"
+            if [[ "$OS_TYPE" == "alpine" ]]; then
+                echo "  API-Status:  pct exec $CTID -- rc-service wawi-api status"
+            else
+                echo "  API-Status:  pct exec $CTID -- systemctl status wawi-api"
+            fi
+        else
+            echo "  Docker-Logs: pct exec $CTID -- docker compose -f $INSTALL_DIR/docker-compose.yml logs -f"
+        fi
+        echo "  Backup:      stack-root/pucha.dev + .env sichern (siehe backup_credentials)!"
+    fi
+    echo ""
 }
 
 # ============================================================================

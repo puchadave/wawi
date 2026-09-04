@@ -264,6 +264,161 @@ install_node_alpine() {
 }
 
 # --------------------------------------------------------------------------
+# Postgres / Redis - OS-spezifische Installer (fuer NATIV-Modus)
+# Repliziert was docker-compose.yml via Container liefert, direkt auf Host
+# --------------------------------------------------------------------------
+install_postgres_debian() {
+    info "Installiere PostgreSQL (Debian Standard)..."
+    apt_install_debian postgresql postgresql-contrib || return 1
+    if command -v systemctl &>/dev/null; then
+        systemctl enable postgresql 2>/dev/null || true
+        systemctl start postgresql 2>/dev/null || service postgresql start 2>/dev/null || true
+    else
+        service postgresql start 2>/dev/null || pg_ctlcluster 16 main start 2>/dev/null || true
+    fi
+    sleep 2
+}
+
+install_postgres_debian_minimal() {
+    info "Installiere PostgreSQL (Debian Minimal, --no-install-recommends)..."
+    apt_install_debian_minimal postgresql postgresql-contrib || return 1
+    if command -v systemctl &>/dev/null; then
+        systemctl enable postgresql 2>/dev/null || true
+        systemctl start postgresql 2>/dev/null || service postgresql start 2>/dev/null || true
+    else
+        service postgresql start 2>/dev/null || pg_ctlcluster 16 main start 2>/dev/null || true
+    fi
+    sleep 2
+}
+
+install_postgres_alpine() {
+    info "Installiere PostgreSQL (Alpine)..."
+    apk_add postgresql16 postgresql16-client postgresql16-contrib 2>/dev/null || apk_add postgresql postgresql-client 2>/dev/null || return 1
+    if ! id postgres &>/dev/null; then warn "postgres user nicht gefunden nach Installation"; fi
+    mkdir -p /var/lib/postgresql/data /run/postgresql
+    chown -R postgres:postgres /var/lib/postgresql 2>/dev/null || true
+    chown -R postgres:postgres /run/postgresql 2>/dev/null || true
+    if [[ ! -s /var/lib/postgresql/data/PG_VERSION ]]; then
+        info "Initialisiere PostgreSQL Cluster (initdb)..."
+        su postgres -c "initdb -D /var/lib/postgresql/data --auth=trust" 2>/dev/null || su postgres -c "initdb -D /var/lib/postgresql/data" 2>/dev/null || initdb -D /var/lib/postgresql/data -U postgres 2>/dev/null || true
+    fi
+    if command -v rc-update &>/dev/null; then
+        rc-update add postgresql default 2>/dev/null || true
+        service postgresql start 2>/dev/null || rc-service postgresql start 2>/dev/null || true
+    fi
+    if ! pg_isready -q 2>/dev/null; then
+        warn "pg_isready fehlgeschlagen - versuche postgres manuell zu starten..."
+        su postgres -c "pg_ctl -D /var/lib/postgresql/data -l /var/log/postgresql.log start" 2>/dev/null || pg_ctl -D /var/lib/postgresql/data -l /tmp/pg.log start 2>/dev/null || true
+        sleep 2
+    fi
+}
+
+install_redis_debian() {
+    info "Installiere Redis (Debian Standard)..."
+    apt_install_debian redis-server || apt_install_debian redis || return 1
+    if command -v systemctl &>/dev/null; then
+        systemctl enable redis-server 2>/dev/null || systemctl enable redis 2>/dev/null || true
+        systemctl start redis-server 2>/dev/null || systemctl start redis 2>/dev/null || service redis-server start 2>/dev/null || true
+    else
+        service redis-server start 2>/dev/null || service redis start 2>/dev/null || redis-server --daemonize yes 2>/dev/null || true
+    fi
+}
+
+install_redis_debian_minimal() {
+    info "Installiere Redis (Debian Minimal)..."
+    apt_install_debian_minimal redis-server 2>/dev/null || apt_install_debian_minimal redis 2>/dev/null || return 1
+    if command -v systemctl &>/dev/null; then
+        systemctl enable redis-server 2>/dev/null || systemctl enable redis 2>/dev/null || true
+        systemctl start redis-server 2>/dev/null || systemctl start redis 2>/dev/null || service redis-server start 2>/dev/null || true
+    else
+        service redis-server start 2>/dev/null || redis-server --daemonize yes 2>/dev/null || true
+    fi
+}
+
+install_redis_alpine() {
+    info "Installiere Redis (Alpine)..."
+    apk_add redis || return 1
+    if command -v rc-update &>/dev/null; then
+        rc-update add redis default 2>/dev/null || true
+        service redis start 2>/dev/null || rc-service redis start 2>/dev/null || true
+    fi
+    if ! redis-cli ping &>/dev/null 2>&1; then
+        redis-server --daemonize yes 2>/dev/null || true
+    fi
+}
+
+setup_postgres_db() {
+    local db_user="${1:-wawi}"
+    local db_pass="${2:-wawi_password}"
+    local db_name="${3:-wawi_db}"
+    info "Richte PostgreSQL DB ein: user=$db_user db=$db_name ..."
+    if ! pg_isready -q 2>/dev/null && ! pg_isready -h localhost -q 2>/dev/null; then
+        warn "Postgres nicht ready - warte 3s..."
+        sleep 3
+    fi
+    if su postgres -c "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='$db_user'\"" 2>/dev/null | grep -q 1; then
+        log "DB-User $db_user existiert bereits"
+    else
+        su postgres -c "psql -c \"CREATE USER $db_user WITH PASSWORD '$db_pass' CREATEDB;\"" 2>/dev/null || su postgres -c "psql -c \"CREATE USER $db_user WITH PASSWORD '$db_pass';\"" 2>/dev/null || sudo -u postgres psql -c "CREATE USER $db_user WITH PASSWORD '$db_pass';" 2>/dev/null || true
+        log "DB-User $db_user erstellt"
+    fi
+    if su postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='$db_name'\"" 2>/dev/null | grep -q 1; then
+        log "DB $db_name existiert bereits"
+    else
+        su postgres -c "createdb -O $db_user $db_name" 2>/dev/null || su postgres -c "psql -c \"CREATE DATABASE $db_name OWNER $db_user;\"" 2>/dev/null || sudo -u postgres createdb -O "$db_user" "$db_name" 2>/dev/null || true
+        log "DB $db_name erstellt"
+    fi
+    su postgres -c "psql -c \"GRANT ALL PRIVILEGES ON DATABASE $db_name TO $db_user;\"" 2>/dev/null || true
+}
+
+install_postgres() {
+    local os; os="$(detect_os)"
+    case "$os" in
+        debian) install_postgres_debian ;;
+        alpine) install_postgres_alpine ;;
+        *) fatal "Unbekanntes OS fuer postgres-Installation: $os" ;;
+    esac
+}
+
+install_redis() {
+    local os; os="$(detect_os)"
+    case "$os" in
+        debian) install_redis_debian ;;
+        alpine) install_redis_alpine ;;
+        *) fatal "Unbekanntes OS fuer redis-Installation: $os" ;;
+    esac
+}
+
+# --------------------------------------------------------------------------
+# stack-root / Admin-Passwort (ersetzt docker-stack Persistenz)
+# Muss direkt auf Host funktionieren - unabhaengig vom Modus
+# --------------------------------------------------------------------------
+ensure_stack_root() {
+    local install_dir="${1:-${INSTALL_DIR:-/opt/wawi}}"
+    local stack_root="$install_dir/stack-root"
+    local pw_file="$stack_root/pucha.dev"
+    if [[ ! -d "$stack_root" ]]; then
+        mkdir -p "$stack_root"
+        chmod 700 "$stack_root" 2>/dev/null || true
+        log "stack-root erstellt: $stack_root"
+    fi
+    if [[ -f "$pw_file" ]] && [[ -s "$pw_file" ]]; then
+        log "Admin-Passwort existiert bereits: $pw_file"
+        return 0
+    fi
+    local pw
+    if command -v openssl &>/dev/null; then
+        pw="$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)"
+    else
+        pw="$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)"
+    fi
+    [[ -z "$pw" ]] && pw="WaWi-$(date +%s)-$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    echo -n "$pw" > "$pw_file"
+    chmod 600 "$pw_file" 2>/dev/null || true
+    log "Admin-Passwort generiert: $pw_file (User: puchadev)"
+}
+
+# --------------------------------------------------------------------------
 # Dispatcher: OS-unabhaengige Installer
 # --------------------------------------------------------------------------
 install_git() {
@@ -395,6 +550,40 @@ validate_node() {
     log "npm --version: $(npm --version 2>&1 | head -n1)"
 }
 
+validate_postgres() {
+    if command -v psql &>/dev/null; then
+        log "psql OK: $(psql --version 2>&1 | head -n1)"
+    elif command -v pg_isready &>/dev/null; then
+        log "pg_isready OK: $(pg_isready --version 2>&1 | head -n1)"
+    else
+        err "VALIDATE FAIL: weder psql noch pg_isready gefunden"
+        return 1
+    fi
+    if pg_isready -q 2>/dev/null || pg_isready -h localhost -q 2>/dev/null || pg_isready -h 127.0.0.1 -q 2>/dev/null; then
+        log "Postgres erreichbar (pg_isready OK)"
+    else
+        warn "Postgres installiert aber nicht erreichbar (pg_isready fehlgeschlagen) - evtl. noch am Starten"
+    fi
+    return 0
+}
+
+validate_redis() {
+    if command -v redis-cli &>/dev/null; then
+        log "redis-cli OK: $(redis-cli --version 2>&1 | head -n1)"
+    elif command -v redis-server &>/dev/null; then
+        log "redis-server OK: $(redis-server --version 2>&1 | head -n1)"
+    else
+        err "VALIDATE FAIL: weder redis-cli noch redis-server gefunden"
+        return 1
+    fi
+    if redis-cli ping 2>/dev/null | grep -qi PONG || redis-cli -h localhost ping 2>/dev/null | grep -qi PONG; then
+        log "Redis erreichbar (PING -> PONG)"
+    else
+        warn "Redis installiert aber nicht erreichbar (redis-cli ping fehlgeschlagen) - evtl. noch am Starten"
+    fi
+    return 0
+}
+
 # Haupt-Validierungsroutine (wie gefordert: validate_environment)
 # Aufruf: validate_environment [debian|debian-minimal|alpine] [docker|nativ]
 # Ohne Argumente: auto-detect OS, mode=docker
@@ -419,8 +608,9 @@ validate_environment() {
         validate_docker || failed=1
     elif [[ "$mode" == "nativ" ]]; then
         validate_node || failed=1
+        validate_postgres || failed=1
+        validate_redis || failed=1
     else
-        # docker + nativ gemischt pruefen? Standard docker
         validate_docker || failed=1
     fi
 
