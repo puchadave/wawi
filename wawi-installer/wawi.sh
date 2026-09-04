@@ -545,14 +545,24 @@ create_lxc() {
         TEMPLATE_PREFIX="alpine-"
     fi
 
+    # Host-Architektur für Template-Auswahl (amd64 vs arm64) ermitteln
+    local HOST_ARCH="" TPL_ARCH=""
+    HOST_ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m 2>/dev/null || echo "amd64")
+    case "$HOST_ARCH" in
+        arm64|aarch64) TPL_ARCH="arm64" ;;
+        amd64|x86_64)  TPL_ARCH="amd64" ;;
+        *) TPL_ARCH="$HOST_ARCH" ;;
+    esac
+    info "Host-Architektur: $HOST_ARCH -> Template-Arch: $TPL_ARCH"
+
     # Template-Handling: pveam update (fehlertolerant)
     info "Aktualisiere Template-Liste..."
     pveam update 2>/dev/null || warn "pveam update hatte Fehler (nicht kritisch)"
     # Warte kurz, damit Appliance-Liste aktualisiert ist
     sleep 1
 
-    # Neuestes System-Template suchen - robust gegen PVE-Varianten
-    info "Suche aktuellstes System-Template: ${TEMPLATE_PREFIX}*"
+    # Neuestes System-Template suchen - robust gegen PVE-Varianten, arch-bewusst
+    info "Suche aktuellstes System-Template: ${TEMPLATE_PREFIX}* (Arch: $TPL_ARCH)"
     local available_template=""
     local pveam_out=""
 
@@ -560,20 +570,31 @@ create_lxc() {
     pveam_out=$(pveam available --section system 2>/dev/null || pveam available 2>/dev/null || true)
 
     if [[ -n "$pveam_out" ]]; then
-        # Korrekte Spalten: $1=TEMPLATE $2=SECTION ("system" klein). Vorheriger Code nutzte $1=="System" (falsch/invertiert).
-        # Robust: case-insensitive Section-Check und Header-Zeile ueberspringen.
+        # 1a) Bevorzugt passende Arch (amd64/arm64)
         available_template=$(echo "$pveam_out" \
             | awk 'NR==1 && tolower($1)=="name" {next} tolower($2)=="system" {print $1}' \
             | grep -E "^${TEMPLATE_PREFIX}[0-9]" \
+            | grep -E "_${TPL_ARCH}\." \
             | sort -V \
             | tail -1 || true)
-        # Fallback: falls Section-Spalte anders/lokal abweicht, nimm einfach alle mit Prefix
+        # 1b) Fallback: beliebige Arch mit gleichem Prefix
+        if [[ -z "$available_template" ]]; then
+            available_template=$(echo "$pveam_out" \
+                | awk 'NR==1 && tolower($1)=="name" {next} tolower($2)=="system" {print $1}' \
+                | grep -E "^${TEMPLATE_PREFIX}[0-9]" \
+                | sort -V \
+                | tail -1 || true)
+        fi
+        # 1c) Letzter Fallback: Section-Spalte ignorieren
         if [[ -z "$available_template" ]]; then
             available_template=$(echo "$pveam_out" \
                 | awk 'NR==1 && tolower($1)=="name" {next} {print $1}' \
                 | grep -E "^${TEMPLATE_PREFIX}[0-9]" \
                 | sort -V \
                 | tail -1 || true)
+        fi
+        if [[ -n "$available_template" ]] && ! echo "$available_template" | grep -q "_${TPL_ARCH}\."; then
+            warn "Kein Template fuer $TPL_ARCH gefunden - nutze $available_template (Arch-Mismatch, kann fehlschlagen)"
         fi
     fi
 
@@ -583,47 +604,43 @@ create_lxc() {
         local local_list
         local_list=$(pveam list "$STORAGE" 2>/dev/null || true)
         if [[ -n "$local_list" ]]; then
-            # Robust: egal ob "local:vztmpl/name" (colon) oder "local vztmpl/name" (Spalten), extrahiere reinen Dateinamen
+            # Bevorzugt passende Arch
             available_template=$(echo "$local_list" \
+                | grep -oE "${TEMPLATE_PREFIX}[a-zA-Z0-9._-]+\.tar\.(xz|gz|zst)" \
+                | grep -E "_${TPL_ARCH}\." \
+                | sort -V \
+                | tail -1 || true)
+            if [[ -z "$available_template" ]]; then
+                available_template=$(echo "$local_list" \
                 | grep -oE "${TEMPLATE_PREFIX}[a-zA-Z0-9._-]+\.tar\.(xz|gz|zst)" \
                 | sort -V \
                 | tail -1 || true)
-            # Fallback falls grep -oE Extension-Muster nicht passt (andere Endung): generisch
+            fi
+            # Generischer Fallback
             if [[ -z "$available_template" ]]; then
                 available_template=$(echo "$local_list" \
                     | grep -oE "${TEMPLATE_PREFIX}[^[:space:]]+" \
                     | grep -E "^${TEMPLATE_PREFIX}[0-9]" \
+                    | grep -E "_${TPL_ARCH}\." \
                     | sort -V \
                     | tail -1 || true)
+                if [[ -z "$available_template" ]]; then
+                    available_template=$(echo "$local_list" \
+                    | grep -oE "${TEMPLATE_PREFIX}[^[:space:]]+" \
+                    | grep -E "^${TEMPLATE_PREFIX}[0-9]" \
+                    | sort -V \
+                    | tail -1 || true)
+                fi
             fi
             if [[ -n "$available_template" ]]; then
-                log "Verwende lokal vorhandenes Template: $available_template (Fallback, ohne Download)"
+                if echo "$available_template" | grep -q "_${TPL_ARCH}\."; then
+                    log "Verwende lokal vorhandenes Template: $available_template (Arch $TPL_ARCH, Fallback ohne Download)"
+                else
+                    warn "Verwende lokal vorhandenes Template: $available_template (Arch-Mismatch, erwartet $TPL_ARCH)"
+                fi
             fi
         fi
     fi
-
-    if [[ -z "$available_template" ]]; then
-        err "Kein ${TEMPLATE_PREFIX}*-System-Template verfügbar!"
-        err "Diagnose:"
-        err "  pveam available Ausgabe (erste 30 Zeilen):"
-        if [[ -n "$pveam_out" ]]; then
-            echo "$pveam_out" | head -n 30 | while IFS= read -r line; do err "    $line"; done
-        else
-            err "    (keine Ausgabe - pveam available lieferte leer / Fehler)"
-        fi
-        err "  pvesm status (Storages):"
-        pvesm status 2>/dev/null | head -n 20 | while IFS= read -r line; do err "    $line"; done || true
-        err "  pveam list $STORAGE (lokal):"
-        pveam list "$STORAGE" 2>/dev/null | head -n 20 | while IFS= read -r line; do err "    $line"; done || true
-        err ""
-        err "Loesungen:"
-        err "  1) pveam update  # Template-Liste aktualisieren (Internet erforderlich)"
-        err "  2) pveam available --section system | grep -E '^${TEMPLATE_PREFIX}'"
-        err "  3) Manuell laden: pveam download $STORAGE <template>  (z.B. debian-12-standard_*.tar.zst / alpine-3.19-*.tar.xz)"
-        err "  4) pvesm status pruefen: Storage '$STORAGE' muss existieren und aktiv sein"
-        exit 1
-    fi
-    log "Verwende Template: $available_template"
 
     # Prüfe ob Template lokal vorhanden
     if ! pveam list "$STORAGE" 2>/dev/null | grep -q "$available_template"; then
@@ -637,8 +654,13 @@ create_lxc() {
         log "Template bereits vorhanden"
     fi
 
-    # Netzwerk-Parameter
-    local NET_PARAM="name=eth0,bridge=${BRIDGE},hwaddr=$(printf '02:%02x:%02x:%02x:%02x:%02x' $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)))"
+    # Netzwerk-Parameter - MAC: fest 02 + 5 Random-Bytes = 6 Oktette (fix: vorher 6 Werte auf 5 Platzhalter -> 34-Zeichen invalide MAC)
+    local NET_PARAM="name=eth0,bridge=${BRIDGE},hwaddr=$(printf '02:%02x:%02x:%02x:%02x:%02x' $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)))"
+    # Validierung: genau 17 Zeichen, sonst ohne hwaddr (PVE auto-generiert)
+    if ! echo "$NET_PARAM" | grep -qE "hwaddr=([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}"; then
+        warn "Generierte MAC ungueltig: $NET_PARAM - nutze auto-MAC"
+        NET_PARAM="name=eth0,bridge=${BRIDGE}"
+    fi
     if [[ -n "$STATIC_IP" ]]; then
         NET_PARAM+=",ip=${STATIC_IP}"
         [[ -n "$GATEWAY" ]] && NET_PARAM+=",gw=${GATEWAY}"
