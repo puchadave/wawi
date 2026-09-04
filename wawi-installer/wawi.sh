@@ -400,27 +400,34 @@ create_lxc() {
     local STORAGE="local"
     local BRIDGE="vmbr0"
 
+    local TEMPLATE_PREFIX=""
     if [[ "$OS_TYPE" == "debian" ]]; then
-        TEMPLATE="debian-12"
+        TEMPLATE_PREFIX="debian-"
     else
-        TEMPLATE="alpine-3.20"
+        TEMPLATE_PREFIX="alpine-"
     fi
 
     # Template-Handling: pveam update (fehlertolerant)
     info "Aktualisiere Template-Liste..."
     pveam update 2>/dev/null || warn "pveam update hatte Fehler (nicht kritisch)"
 
-    # Template suchen (Präfix-Match)
-    info "Suche Template: ${TEMPLATE}*"
+    # Neuestes System-Template suchen (Turnkeylinux-Austräge ausschließen)
+    info "Suche aktuellstes System-Template: ${TEMPLATE_PREFIX}*"
     local available_template
-    available_template=$(pveam available 2>/dev/null | grep -i "${TEMPLATE}" | awk '{print $2}' | head -1 || true)
+    available_template=$(pveam available 2>/dev/null \
+        | awk '$1=="System" {print $2}' \
+        | grep -E "^${TEMPLATE_PREFIX}[0-9]" \
+        | sort -V \
+        | tail -1 || true)
 
     if [[ -z "$available_template" ]]; then
-        err "Template für $TEMPLATE nicht verfügbar!"
-        err "Verfügbare Templates:"
-        pveam available 2>/dev/null | grep -iE "alpine|debian" | head -10 || true
+        err "Kein ${TEMPLATE_PREFIX}*-System-Template verfügbar!"
+        err "Verfügbare System-Templates:"
+        pveam available 2>/dev/null | awk '$1=="System" {print $2}' | grep -E "^${TEMPLATE_PREFIX}" || true
+        pveam available 2>/dev/null | awk '$1=="System" {print $2}' | head -5 || true
         exit 1
     fi
+    log "Verwende Template: $available_template"
 
     # Prüfe ob Template lokal vorhanden
     if ! pveam list "$STORAGE" 2>/dev/null | grep -q "$available_template"; then
@@ -431,7 +438,7 @@ create_lxc() {
         }
         log "Template heruntergeladen: $available_template"
     else
-        log "Template vorhanden: $available_template"
+        log "Template bereits vorhanden"
     fi
 
     # Netzwerk-Parameter
