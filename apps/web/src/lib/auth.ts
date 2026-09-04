@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+// The production UI is reverse-proxied through nginx, so API calls must use
+// the current browser origin instead of localhost inside the user's browser.
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 interface AuthTokens {
   accessToken: string;
@@ -67,7 +69,7 @@ export function isLoggedIn(): boolean {
 }
 
 export async function login(username: string, password: string): Promise<AuthUser> {
-  const response = await fetch(`${API_BASE}/api/auth/login`, {
+  const response = await fetch(`${API_BASE}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),
@@ -92,7 +94,7 @@ export async function login(username: string, password: string): Promise<AuthUse
 export async function logout(): Promise<void> {
   if (currentTokens) {
     try {
-      await fetch(`${API_BASE}/api/auth/logout`, {
+      await fetch(`${API_BASE}/auth/logout`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${currentTokens.accessToken}`,
@@ -115,7 +117,7 @@ export async function refreshAccessToken(): Promise<boolean> {
     try {
       if (!currentTokens?.refreshToken) return false;
 
-      const response = await fetch(`${API_BASE}/api/auth/refresh`, {
+      const response = await fetch(`${API_BASE}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken: currentTokens.refreshToken }),
