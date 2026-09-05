@@ -24,6 +24,11 @@ else
             echo "[✗] Weder curl noch wget vorhanden und lib/common.sh fehlt - Abbruch"; exit 1
         fi
     fi
+    # NATIV-only: keine Docker-Installation, keine docker-cli-compose
+    if [[ "$DEPLOY_MODE" == "docker" ]]; then
+        warn "DEPLOY_MODE=docker nicht unterstützt in Alpine-Installer (nativ-only)"
+        exit 1
+fi
 fi
 
 # --------------------------------------------------------------------------

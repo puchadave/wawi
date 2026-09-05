@@ -670,13 +670,32 @@ create_lxc() {
 
     local DISK_SIZE="${DISK}G"
 
-    # LXC erstellen
+    # PVE rootfs: STORAGE:SIZE  (z.B. local:8G). Template immer auf 'local' (vztmpl),
+    # rootfs bevorzugt lvm-thin (local-lvm) falls vorhanden, sonst Verzeichnis-Storage.
+    local ROOTFS_STORAGE="$STORAGE"
+    if pvesm status 2>/dev/null | awk '{print $1}' | grep -qx "local-lvm"; then
+        ROOTFS_STORAGE="local-lvm"
+    elif pvesm status 2>/dev/null | awk '{print $1}' | grep -qx "local-data"; then
+        ROOTFS_STORAGE="local-data"
+    else
+        local _dir_storage
+        _dir_storage=$(pvesm status 2>/dev/null | awk 'NR>1 && $2=="dir" && $6 ~ /rootdir|images/ {print $1; exit}')
+        if [[ -n "$_dir_storage" ]]; then
+            ROOTFS_STORAGE="$_dir_storage"
+        fi
+    fi
+    [[ -z "$ROOTFS_STORAGE" ]] && ROOTFS_STORAGE="$STORAGE"
+    if [[ "$ROOTFS_STORAGE" != "$STORAGE" ]]; then
+        info "Rootfs-Storage: $ROOTFS_STORAGE (Template-Storage: $STORAGE)"
+    fi
+    info "Rootfs: ${ROOTFS_STORAGE}:${DISK_SIZE}  Template: ${STORAGE}:vztmpl/${available_template}"
+
     info "Erstelle Container $CTID..."
     pct create "$CTID" "${STORAGE}:vztmpl/${available_template}" \
         --hostname "wawi-${CTID}" \
         --memory "$RAM" \
         --cores "$CPU" \
-        --rootfs "${STORAGE}:${DISK_SIZE}" \
+        --rootfs "${ROOTFS_STORAGE}:${DISK_SIZE}" \
         --net0 "$NET_PARAM" \
         --ostype "$OS_TYPE" \
         --unprivileged 1 \
