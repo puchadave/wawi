@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WaWi Admin — Bestellungen & Versand</title>
+<title>WaWi Admin — Leitstand & Debugging</title>
 <link rel="stylesheet" href="/style.css">
 <style>
   .login-msg { color: var(--warn); margin: 8px 0; }
@@ -19,10 +19,35 @@
   .order-box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
   .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; align-items: center; }
   .badge { color: var(--accent); font-weight: 700; }
+  
+  /* Tabs */
+  .tab-bar { display: flex; gap: 8px; margin: 20px 0 14px 0; border-bottom: 1px solid var(--line); padding-bottom: 8px; flex-wrap: wrap; }
+  .tab-btn { background: transparent; border: 1px solid var(--line); color: var(--muted); padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: .85rem; }
+  .tab-btn.active { background: var(--panel); border-color: var(--accent); color: var(--fg); font-weight: 700; }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+  
+  /* Debug Console */
+  .log-console { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 10px; font-family: monospace; font-size: .75rem; height: 320px; overflow-y: auto; color: #c9d1d9; }
+  .log-line { margin: 2px 0; border-bottom: 1px solid #161b22; padding-bottom: 2px; }
+  .log-DEBUG { color: #8b949e; }
+  .log-INFO { color: #58a6ff; }
+  .log-PERF { color: #d2a8ff; }
+  .log-WARN { color: #d29922; }
+  .log-ERROR { color: #f85149; font-weight: bold; }
+  .log-AUDIT { color: #3fb950; font-weight: bold; }
+  .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 12px; }
+  .metric-card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; text-align: center; }
+  .metric-val { font-size: 1.3rem; font-weight: 700; color: var(--accent); margin-top: 4px; }
 </style>
 </head>
 <body>
-<header class="topbar"><div class="wrap"><div class="brand">WaWi<span>ADMIN</span></div><div class="cartlink"><a href="/">Shop-Ansicht</a></div></div></header>
+<header class="topbar">
+  <div class="wrap">
+    <div class="brand">WaWi<span>LEITSTAND & DEBUGGING</span></div>
+    <div class="cartlink"><a href="/">Shop-Ansicht</a></div>
+  </div>
+</header>
 
 <main class="wrap">
   <section id="loginBox">
@@ -35,187 +60,362 @@
     </div>
   </section>
 
-  <section id="adminBox" style="display:none">
-    <h2>Bestellungen <span id="orderCount" class="badge"></span></h2>
-    <div class="toolbar">
-      <button id="refreshBtn">Aktualisieren</button>
-      <a href="/api/admin/export" id="exportBtn" style="padding:10px 12px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text);font-size:.95rem;">CSV-Export (Versand)</a>
+  <section id="adminArea" style="display:none">
+    
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab('tab-orders')">📦 Bestellungen & Versand</button>
+      <button class="tab-btn" onclick="switchTab('tab-products')">🏷️ Produkte & Sortiment</button>
+      <button class="tab-btn" onclick="switchTab('tab-pricing')">💰 Preiskalkulator</button>
+      <button class="tab-btn" onclick="switchTab('tab-channels')">📢 WhatsApp & Facebook</button>
+      <button class="tab-btn" onclick="switchTab('tab-debug')">⚡ Live-Debugging & Telemetrie</button>
     </div>
 
-    <h2>Verkaufen über WhatsApp & Facebook</h2>
-    <div class="order-box">
-      <p style="color:var(--muted);font-size:.85rem;margin-bottom:8px">
-        WhatsApp-Nummer (international, z.B. <b>+491701234567</b>) — erscheint als "WhatsApp bestellen" im Shop.
-        Facebook-Profil (für Marketplace) — erzeugt den Direktlink zur Listing-Erstellung.
-      </p>
+    <!-- TAB 1: Bestellungen -->
+    <div id="tab-orders" class="tab-pane active">
+      <h2>Bestellübersicht (Echtzeit)</h2>
       <div class="toolbar">
-        <input type="text" id="cfgWa" placeholder="+491701234567" style="max-width:200px">
-        <input type="text" id="cfgFb" placeholder="facebook.com/deinprofil" style="max-width:240px">
-        <button id="cfgSaveBtn">Speichern</button>
-        <span id="cfgMsg" class="result ok"></span>
+        <button id="refreshBtn">Neu laden</button>
+        <button id="backupBtn">Sofort-Backup sichern</button>
+        <span id="orderCount" class="badge"></span>
       </div>
-      <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px">
-        <b>Marketplace-Listing erstellen:</b>
-        <div class="toolbar">
-          <select id="mpProduct" aria-label="Produkt wählen"></select>
-          <button id="mpCopyBtn">Listing-Text kopieren</button>
-          <a id="mpFbLink" href="https://www.facebook.com/marketplace/create/" target="_blank" rel="noopener" style="padding:10px 12px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text);font-size:.95rem;">Bei Facebook öffnen</a>
+      <div id="ordersList">Lade Bestellungen...</div>
+    </div>
+
+    <!-- TAB 2: Produkte -->
+    <div id="tab-products" class="tab-pane">
+      <h2>Artikelstamm & Whitelist</h2>
+      <div class="toolbar">
+        <button id="loadProductsBtn">Aktualisieren</button>
+        <a href="/api/admin/channels/feed.csv" target="_blank" class="btn">CSV Feed-Export</a>
+      </div>
+      <div id="productsTableContainer">Lade Artikel...</div>
+    </div>
+
+    <!-- TAB 3: Preiskalkulator -->
+    <div id="tab-pricing" class="tab-pane">
+      <h2>WaWi Preiskalkulator (Simulation & Anpassung)</h2>
+      <div class="order-box">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:12px">
+          <div>
+            <label style="font-size:.8rem;color:var(--muted)">Lieferanten-EK Netto (€):</label>
+            <input type="number" id="calcEkNet" value="20.00" step="0.50">
+          </div>
+          <div>
+            <label style="font-size:.8rem;color:var(--muted)">Zielmarge (z.B. 0.40 für 40%):</label>
+            <input type="number" id="calcMargin" value="0.40" step="0.05">
+          </div>
+          <div>
+            <label style="font-size:.8rem;color:var(--muted)">MwSt-Satz (z.B. 0.19 für 19%):</label>
+            <input type="number" id="calcVat" value="0.19" step="0.01">
+          </div>
+          <div>
+            <label style="font-size:.8rem;color:var(--muted)">Fester Aufschlag Netto (€):</label>
+            <input type="number" id="calcSurcharge" value="0.00" step="0.50">
+          </div>
         </div>
-        <textarea id="mpText" rows="5" readonly style="width:100%;margin-top:8px;font-family:monospace;font-size:.8rem"></textarea>
+        <div class="toolbar" style="margin-top:14px">
+          <button class="primary" id="btnRunCalc">Kalkulation berechnen</button>
+          <button id="btnApplyAllPricing">Auf alle Artikel anwenden</button>
+        </div>
+        <div id="calcResultBox" style="margin-top:12px;padding:10px;background:var(--bg);border-radius:6px;font-size:.85rem;display:none"></div>
       </div>
     </div>
 
-    <div id="ordersBox"></div>
+    <!-- TAB 4: Channels & Zahlung -->
+    <div id="tab-channels" class="tab-pane">
+      <h2>Verkaufskanäle & Zahlungsarten</h2>
+      <div class="order-box">
+        <h3>WhatsApp & Facebook</h3>
+        <label style="font-size:.8rem;color:var(--muted)">WhatsApp-Nummer (z.B. +491701234567):</label>
+        <input type="text" id="cfgWa" placeholder="+491701234567">
+        
+        <label style="font-size:.8rem;color:var(--muted);margin-top:8px;display:block">Facebook Profil URL:</label>
+        <input type="text" id="cfgFb" placeholder="https://facebook.com/dein-profil">
+
+        <h3 style="margin-top:16px">Zahlungskonfiguration</h3>
+        <label style="font-size:.8rem;color:var(--muted)">Standard-Zahlungsmethode:</label>
+        <select id="cfgPaymentMethod">
+          <option value="vorkasse">Vorkasse / Banküberweisung</option>
+          <option value="paypal">PayPal</option>
+          <option value="stripe">Stripe (Kreditkarte/Klarna)</option>
+        </select>
+
+        <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <label style="font-size:.8rem;color:var(--muted)">Kontoinhaber:</label>
+            <input type="text" id="cfgBankHolder">
+          </div>
+          <div>
+            <label style="font-size:.8rem;color:var(--muted)">IBAN:</label>
+            <input type="text" id="cfgBankIban">
+          </div>
+        </div>
+
+        <div class="toolbar" style="margin-top:14px">
+          <button class="primary" id="cfgSaveBtn">Einstellungen speichern</button>
+          <span id="cfgMsg" class="result ok"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 5: Live Debugging -->
+    <div id="tab-debug" class="tab-pane">
+      <h2>Kontinuierliches Debugging & System-Telemetrie</h2>
+      
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div style="font-size:.75rem;color:var(--muted)">UPTIME</div>
+          <div class="metric-val" id="metricUptime">-</div>
+        </div>
+        <div class="metric-card">
+          <div style="font-size:.75rem;color:var(--muted)">HEAP USAGE</div>
+          <div class="metric-val" id="metricHeap">-</div>
+        </div>
+        <div class="metric-card">
+          <div style="font-size:.75rem;color:var(--muted)">LOG-PUFFER</div>
+          <div class="metric-val" id="metricLogs">-</div>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <button id="refreshLogsBtn">Logs aktualisieren</button>
+        <select id="logLevelFilter">
+          <option value="">Alle Level</option>
+          <option value="DEBUG">DEBUG</option>
+          <option value="INFO">INFO</option>
+          <option value="AUDIT">AUDIT</option>
+          <option value="PERF">PERF</option>
+          <option value="WARN">WARN</option>
+          <option value="ERROR">ERROR</option>
+        </select>
+        <label style="font-size:.8rem;color:var(--muted)"><input type="checkbox" id="autoRefreshLogs" checked> Live-Polling (3s)</label>
+      </div>
+
+      <div class="log-console" id="logConsole">Lade System-Logs...</div>
+    </div>
+
   </section>
 </main>
 
 <script>
-'use strict';
-let token = localStorage.getItem('wawi-admin-token') || '';
+let token = localStorage.getItem('wawi_token') || '';
 
-function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function money(n) { return n.toFixed(2).replace('.', ',') + ' EUR'; }
-function fmt(d) { return new Date(d).toLocaleString('de-DE'); }
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  
+  event.target.classList.add('active');
+  document.getElementById(tabId).classList.add('active');
+  
+  if (tabId === 'tab-debug') loadDebugLogs();
+  if (tabId === 'tab-products') loadProductsAdmin();
+  if (tabId === 'tab-channels') loadConfigAdmin();
+}
 
 async function login() {
   const pw = document.getElementById('pw').value;
-  const r = await fetch('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) });
+  const r = await fetch('/api/admin/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: pw }),
+  });
   const data = await r.json();
-  if (r.ok) { token = data.token; localStorage.setItem('wawi-admin-token', token); document.getElementById('loginBox').style.display = 'none'; document.getElementById('adminBox').style.display = 'block'; await loadOrders(); }
-  else document.getElementById('loginErr').textContent = 'Login fehlgeschlagen';
+  if (r.ok && data.token) {
+    token = data.token;
+    localStorage.setItem('wawi_token', token);
+    showAdmin();
+  } else {
+    document.getElementById('loginErr').textContent = data.error || 'Fehler beim Anmelden';
+  }
+}
+
+function showAdmin() {
+  document.getElementById('loginBox').style.display = 'none';
+  document.getElementById('adminArea').style.display = 'block';
+  loadOrders();
 }
 
 async function loadOrders() {
   const r = await fetch('/api/admin/orders', { headers: { 'x-admin-token': token } });
-  if (r.status === 401) { document.getElementById('loginBox').style.display = 'block'; document.getElementById('adminBox').style.display = 'none'; return; }
+  if (!r.ok) { document.getElementById('adminArea').style.display = 'none'; document.getElementById('loginBox').style.display = 'block'; return; }
   const data = await r.json();
-  const orders = data.orders || [];
-  document.getElementById('orderCount').textContent = orders.length + ' offen/gesamt';
-  const box = document.getElementById('ordersBox');
-  box.innerHTML = '';
-  for (const o of orders) {
-    const div = document.createElement('div');
-    div.className = 'order-box';
-    const items = o.items.map(i => `${esc(i.name)} (${esc(i.size)}) x${i.qty} — ${money(i.total)}`).join('<br>');
-    const custWa = o.customer.phone ? o.customer.phone.replace(/[^0-9]/g, '') : '';
-    let waBtns = '';
-    if (custWa.length >= 8) {
-      const waTxt = `Hallo ${esc(o.customer.name)}! Zu deiner Bestellung ${esc(o.id)} (${money(o.total)}): Status ${esc(o.status)}.`;
-      waBtns += `<a href="https://wa.me/${custWa}?text=${encodeURIComponent(waTxt)}" target="_blank" rel="noopener" style="display:inline-block;padding:8px 12px;border:1px solid #25d366;border-radius:8px;color:#25d366;text-decoration:none;font-size:.85rem;margin-right:6px">WhatsApp-Nachricht</a>`;
-    }
-    div.innerHTML = `
-      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
-        <b>${esc(o.id)}</b>
-        <span class="st st-${esc(o.status)}">${esc(o.status)}</span>
-      </div>
-      <div style="color:var(--muted);font-size:.8rem;margin:4px 0">${fmt(o.created)}</div>
-      <div><b>${esc(o.customer.name)}</b> — ${esc(o.customer.email)}${o.customer.phone ? ' — Tel: ' + esc(o.customer.phone) : ''}</div>
-      <div style="color:var(--muted)">${esc(o.customer.street)}, ${esc(o.customer.zip)} ${esc(o.customer.city)}</div>
-      ${o.customer.note ? '<div style="color:var(--warn)">Hinweis: ' + esc(o.customer.note) + '</div>' : ''}
-      <div style="margin-top:8px">${items}</div>
-      <div style="margin-top:8px;font-weight:700">Gesamt: ${money(o.total)}</div>
-      ${o.tracking ? `<div style="margin-top:8px;color:var(--ok);font-size:.85rem">📦 ${esc(o.tracking.carrier)} — <a href="${esc(o.tracking.url)}" target="_blank" rel="noopener">Sendung ${esc(o.tracking.number)} verfolgen (Live-Tracking)</a></div>` : ''}
-      ${o.trackingWarning ? `<div style="margin-top:8px;color:var(--warn);font-size:.85rem">⚠ ${esc(o.trackingWarning)}</div>` : ''}
-      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
-        <button data-st="BEZAHLT" data-id="${esc(o.id)}">Bezahlt</button>
-        <button data-st="VERSENDET" data-id="${esc(o.id)}" data-track="1">Versendet (DHL-Nr.)</button>
-        <button data-st="ABGESCHLOSSEN" data-id="${esc(o.id)}">Abgeschlossen</button>
-        <button data-st="STORNIERT" data-id="${esc(o.id)}" style="color:var(--accent)">Storniert</button>
-        ${waBtns}
-      </div>
-    `;
-    box.appendChild(div);
+  const list = data.orders || [];
+  document.getElementById('orderCount').textContent = list.length + ' Bestellungen';
+
+  if (list.length === 0) {
+    document.getElementById('ordersList').innerHTML = '<p style="color:var(--muted)">Noch keine Bestellungen eingegangen.</p>';
+    return;
   }
-  box.querySelectorAll('[data-st]').forEach(b => b.addEventListener('click', async () => {
-    let payload = { id: b.dataset.id, status: b.dataset.st };
-    // Bei VERSENDET: echte DHL-Sendungsnummer erfassen (kein Fake-Tracking)
-    if (b.dataset.st === 'VERSENDET' && b.dataset.track) {
-      const num = prompt('Echte DHL-Sendungsnummer eingeben (Live-Tracking):', '');
-      if (num === null) return; // abgebrochen
-      payload.tracking = num.trim();
-    }
-    const r = await fetch('/api/admin/order/status', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-admin-token': token }, body: JSON.stringify(payload) });
-    if (r.ok) await loadOrders();
-    else {
-      const d = await r.json().catch(() => ({}));
-      alert('Fehler: ' + (d.error || r.status));
-    }
-  }));
+
+  document.getElementById('ordersList').innerHTML = list.map(o => `
+    <div class="order-box">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><b>${o.id}</b> — ${o.customer.name} (${o.customer.email})</div>
+        <div><span class="st st-${o.status}">${o.status}</span></div>
+      </div>
+      <div style="font-size:.8rem;color:var(--muted);margin:4px 0">Datum: ${new Date(o.date || o.createdAt).toLocaleString()} | Summe: <b>${o.total.toFixed(2)} €</b></div>
+      <div style="font-size:.8rem">Adresse: ${o.customer.street || o.customer.address}, ${o.customer.zip || ''} ${o.customer.city || ''}</div>
+      <div style="margin-top:6px;font-size:.8rem"><b>Artikel:</b> ${(o.items || []).map(it => `${it.quantity}x ${it.name} (${it.size || 'Std'})`).join(', ')}</div>
+      <div style="margin-top:8px;display:flex;gap:6px;align-items:center">
+        <input type="text" placeholder="DHL Sendungsnummer" id="track-${o.id}" value="${(o.tracking && o.tracking.number) || o.trackingNumber || ''}" style="max-width:200px">
+        <button onclick="setTracking('${o.id}')">Tracking setzen & Versenden</button>
+      </div>
+    </div>
+  `).join('');
 }
 
-document.getElementById('loginBtn').addEventListener('click', login);
-document.getElementById('refreshBtn').addEventListener('click', loadOrders);
-document.getElementById('pw').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+async function setTracking(orderId) {
+  const num = document.getElementById('track-' + orderId).value;
+  const r = await fetch(`/api/admin/orders/${orderId}/tracking`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+    body: JSON.stringify({ trackingNumber: num }),
+  });
+  if (r.ok) loadOrders();
+}
 
-/* ---- WhatsApp/Facebook-Konfiguration ---- */
+async function loadProductsAdmin() {
+  const r = await fetch('/api/admin/products', { headers: { 'x-admin-token': token } });
+  if (!r.ok) return;
+  const data = await r.json();
+  const prods = data.products || [];
+
+  document.getElementById('productsTableContainer').innerHTML = `
+    <table>
+      <thead><tr><th>SKU</th><th>Name</th><th>Kategorie</th><th>Bestand</th><th>EK Netto</th><th>VK Brutto</th><th>Whitelist</th></tr></thead>
+      <tbody>
+        ${prods.map(p => `
+          <tr>
+            <td>${p.sku || p.id}</td>
+            <td><b>${p.name}</b></td>
+            <td>${p.category || '-'}</td>
+            <td>${p.stock}</td>
+            <td>${(p.supplierEkNet || 0).toFixed(2)} €</td>
+            <td><b>${(p.price || 0).toFixed(2)} €</b></td>
+            <td>
+              <button class="${p.isWhitelisted ? 'ok' : ''}" onclick="toggleWhitelist('${p.id}', ${!p.isWhitelisted})">
+                ${p.isWhitelisted ? '✓ Aktiv' : '✗ Gesperrt'}
+              </button>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+async function toggleWhitelist(id, newState) {
+  const r = await fetch('/api/admin/catalog/whitelist', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+    body: JSON.stringify({ id, isWhitelisted: newState }),
+  });
+  if (r.ok) loadProductsAdmin();
+}
+
+async function loadDebugLogs() {
+  const lvl = document.getElementById('logLevelFilter').value;
+  const r = await fetch(`/api/admin/debug/logs?limit=100${lvl ? '&level=' + lvl : ''}`, {
+    headers: { 'x-admin-token': token },
+  });
+  if (!r.ok) return;
+  const data = await r.json();
+
+  // Metrics
+  if (data.metrics) {
+    document.getElementById('metricUptime').textContent = data.metrics.uptimeSec + 's';
+    document.getElementById('metricHeap').textContent = data.metrics.memory.heapUsedMb + ' MB';
+    document.getElementById('metricLogs').textContent = (data.logs || []).length;
+  }
+
+  // Logs
+  const lines = (data.logs || []).map(l => `
+    <div class="log-line log-${l.level}">
+      [${l.timestamp.slice(11, 19)}] [${l.level.padEnd(5)}] [${l.category}] ${l.message}
+    </div>
+  `).join('');
+  
+  const consoleEl = document.getElementById('logConsole');
+  consoleEl.innerHTML = lines || '<div style="color:var(--muted)">Keine Logs vorhanden.</div>';
+  consoleEl.scrollTop = consoleEl.scrollHeight;
+}
+
+// Live-Polling für Debug-Logs
+setInterval(() => {
+  if (document.getElementById('tab-debug').classList.contains('active') && document.getElementById('autoRefreshLogs').checked) {
+    loadDebugLogs();
+  }
+}, 3000);
+
+document.getElementById('btnRunCalc').addEventListener('click', async () => {
+  const ek = parseFloat(document.getElementById('calcEkNet').value);
+  const margin = parseFloat(document.getElementById('calcMargin').value);
+  const vat = parseFloat(document.getElementById('calcVat').value);
+  const surcharge = parseFloat(document.getElementById('calcSurcharge').value);
+
+  const r = await fetch('/api/admin/pricing/calculate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+    body: JSON.stringify({ supplierNet: ek, targetMargin: margin, vatRate: vat, fixedSurchargeNet: surcharge }),
+  });
+  const data = await r.json();
+  if (r.ok && data.result) {
+    const res = data.result;
+    const box = document.getElementById('calcResultBox');
+    box.style.display = 'block';
+    box.innerHTML = `
+      <b>Ergebnis der Preiskalkulation:</b><br>
+      • EK Netto (inkl. Aufschläge): <b>${res.shopEkNet.toFixed(2)} €</b><br>
+      • VK Netto: <b>${res.shopVkNet.toFixed(2)} €</b><br>
+      • MwSt (${(vat * 100).toFixed(0)}%): <b>${res.vatAmount.toFixed(2)} €</b><br>
+      • Empfohlener VK Brutto (mit .90 Charm): <b style="color:var(--ok);font-size:1.1rem">${res.shopVkGross.toFixed(2)} €</b><br>
+      • Reale Marge: <b>${(res.marginPercent * 100).toFixed(1)}%</b> (${res.marginAmountNet.toFixed(2)} € Gewinn/Stück)
+    `;
+  }
+});
+
 async function loadConfigAdmin() {
   const r = await fetch('/api/admin/config', { headers: { 'x-admin-token': token } });
   if (!r.ok) return;
   const cfg = await r.json();
   document.getElementById('cfgWa').value = cfg.whatsappNumber || '';
   document.getElementById('cfgFb').value = cfg.facebookProfile || '';
+  document.getElementById('cfgPaymentMethod').value = cfg.paymentMethod || 'vorkasse';
+  document.getElementById('cfgBankHolder').value = cfg.bankHolder || '';
+  document.getElementById('cfgBankIban').value = cfg.bankIban || '';
 }
+
 document.getElementById('cfgSaveBtn').addEventListener('click', async () => {
-  const msg = document.getElementById('cfgMsg');
+  const body = {
+    whatsappNumber: document.getElementById('cfgWa').value,
+    facebookProfile: document.getElementById('cfgFb').value,
+    paymentMethod: document.getElementById('cfgPaymentMethod').value,
+    bankHolder: document.getElementById('cfgBankHolder').value,
+    bankIban: document.getElementById('cfgBankIban').value,
+  };
   const r = await fetch('/api/admin/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
-    body: JSON.stringify({
-      whatsappNumber: document.getElementById('cfgWa').value,
-      facebookProfile: document.getElementById('cfgFb').value,
-    }),
+    body: JSON.stringify(body),
   });
-  const d = await r.json();
-  msg.textContent = r.ok ? 'Gespeichert ✓' : 'Fehler: ' + d.error;
-  msg.className = 'result ' + (r.ok ? 'ok' : 'err');
-});
-
-/* ---- Marketplace-Listing-Generator ---- */
-async function loadProductsAdmin() {
-  const r = await fetch('/api/products');
-  const d = await r.json();
-  const sel = document.getElementById('mpProduct');
-  sel.innerHTML = '';
-  for (const p of d.products) {
-    const opt = document.createElement('option');
-    opt.value = p.id;
-    opt.textContent = p.name + ' — ' + money(p.price);
-    sel.appendChild(opt);
+  if (r.ok) {
+    const msg = document.getElementById('cfgMsg');
+    msg.textContent = 'Gespeichert!';
+    setTimeout(() => { msg.textContent = ''; }, 3000);
   }
-  if (d.products.length) renderMp();
-}
-function renderMp() {
-  const sel = document.getElementById('mpProduct');
-  const opt = sel.selectedOptions[0];
-  if (!opt) return;
-  const name = opt.textContent.split(' — ')[0];
-  fetch('/api/products').then(r => r.json()).then(d => {
-    const p = d.products.find(x => x.name === name);
-    if (!p) return;
-    const lines = [
-      p.name,
-      p.price.toFixed(2).replace('.', ',') + ' EUR',
-      'Größen: ' + p.sizes.join(', '),
-      p.description,
-      '',
-      '1) Abholung möglich  2) Express-Versand (DHL mit Sendungsverfolgung)',
-      'Zahlung: Überweisung oder PayPal',
-    ];
-    document.getElementById('mpText').value = lines.join('\n');
-    const fb = document.getElementById('cfgFb').value;
-    const mpLink = document.getElementById('mpFbLink');
-    if (fb) mpLink.href = 'https://www.facebook.com/marketplace/create/?ref=' + encodeURIComponent(fb.replace(/^https?:\/\//, '').replace(/^www\./, ''));
-  });
-}
-document.getElementById('mpProduct').addEventListener('change', renderMp);
-document.getElementById('mpCopyBtn').addEventListener('click', async () => {
-  const txt = document.getElementById('mpText').value;
-  try { await navigator.clipboard.writeText(txt); alert('Listing-Text kopiert — in Marketplace einfügen.'); }
-  catch (e) { document.getElementById('mpText').select(); document.execCommand('copy'); alert('Listing-Text kopiert (manuell: Strg+C).'); }
 });
-document.getElementById('cfgFb').addEventListener('change', renderMp);
 
-if (token) { document.getElementById('loginBox').style.display = 'none'; document.getElementById('adminBox').style.display = 'block'; loadOrders(); loadConfigAdmin(); loadProductsAdmin(); }
+document.getElementById('loginBtn').addEventListener('click', login);
+document.getElementById('refreshBtn').addEventListener('click', loadOrders);
+document.getElementById('backupBtn').addEventListener('click', async () => {
+  const r = await fetch('/api/admin/backup', { method: 'POST', headers: { 'x-admin-token': token } });
+  if (r.ok) alert('Backup erfolgreich gesichert!');
+});
+document.getElementById('refreshLogsBtn').addEventListener('click', loadDebugLogs);
+document.getElementById('logLevelFilter').addEventListener('change', loadDebugLogs);
+document.getElementById('loadProductsBtn').addEventListener('click', loadProductsAdmin);
+
+if (token) showAdmin();
 </script>
 </body>
 </html>

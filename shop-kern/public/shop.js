@@ -145,6 +145,31 @@ document.getElementById('orderForm').addEventListener('submit', async (ev) => {
     const data = await r.json();
     if (r.ok) {
       let html = `Bestellung ${data.orderId} eingegangen — Summe ${money(data.total)}. Du erhältst die Bestätigung per E-Mail.`;
+      // Zahlungsinformationen anzeigen
+      if (data.payment) {
+        const pay = data.payment;
+        if (pay.method === 'paypal' && pay.links.paypal) {
+          html += `<br><br><div style="background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin-top:10px">`;
+          html += `<b>Zahlung mit PayPal</b><br>${esc(pay.instructions)}<br><br>`;
+          html += `<a class="wa-btn" style="background:#0070ba" href="${esc(pay.links.paypal)}" target="_blank" rel="noopener">Jetzt mit PayPal zahlen (${money(data.total)})</a>`;
+          html += `</div>`;
+        } else if (pay.method === 'stripe' && pay.links.stripe) {
+          html += `<br><br><div style="background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin-top:10px">`;
+          html += `<b>Zahlung per Kreditkarte / Lastschrift</b><br>${esc(pay.instructions)}<br><br>`;
+          html += `<a class="wa-btn" style="background:#635bff" href="${esc(pay.links.stripe)}" target="_blank" rel="noopener">Jetzt online bezahlen (${money(data.total)})</a>`;
+          html += `</div>`;
+        } else if (pay.method === 'vorkasse' && pay.bank) {
+          html += `<br><br><div style="background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin-top:10px">`;
+          html += `<b>Zahlung per Vorkasse</b><br>${esc(pay.instructions)}<br><br>`;
+          html += `Empfänger: <b>${esc(pay.bank.holder)}</b><br>`;
+          html += `IBAN: <b>${esc(pay.bank.iban)}</b><br>`;
+          if (pay.bank.bic) html += `BIC: ${esc(pay.bank.bic)}<br>`;
+          if (pay.bank.bank) html += `Bank: ${esc(pay.bank.bank)}<br>`;
+          html += `Verwendungszweck: <b>${esc(pay.bank.reference)}</b><br>`;
+          html += `<span style="color:var(--muted);font-size:.8rem">${esc(pay.bank.note)}</span>`;
+          html += `</div>`;
+        }
+      }
       if (data.whatsappNumber) {
         const txt = `Hallo! Ich habe soeben im ${SHOP_CFG.shopName} bestellt:\n\nBestellnummer: ${data.orderId}\nSumme: ${money(data.total)}\nName: ${payload.customer.name}\n\nMeine Bestellung bestätigen?`;
         html += `<br><br><a class="wa-btn" href="${waLink(data.whatsappNumber, txt)}" target="_blank" rel="noopener">Bestellung jetzt per WhatsApp bestätigen</a>`;
