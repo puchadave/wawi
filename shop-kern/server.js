@@ -28,6 +28,7 @@ const PRODUCTS_FILE = path.join(DATA_DIR, 'products.json');
 const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 const ADMIN_KEY_FILE = path.join(DATA_DIR, 'admin.key');
 const SESSION_FILE = path.join(DATA_DIR, 'sessions.json');
+const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -56,6 +57,17 @@ function ensureData() {
     log('[i] Admin-Passwort generiert: ' + pw + ' (gespeichert in data/admin-passwort.txt)');
   }
   if (!fs.existsSync(SESSION_FILE)) fs.writeFileSync(SESSION_FILE, '{}');
+  if (!fs.existsSync(CONFIG_FILE)) {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify({
+      whatsappNumber: '',
+      facebookProfile: '',
+      shopName: 'Uptempo Store',
+    }, null, 2));
+  }
+}
+
+function readConfig() {
+  return readJson(CONFIG_FILE, { whatsappNumber: '', facebookProfile: '', shopName: 'Uptempo Store' });
 }
 
 function readJson(file, fallback) {
@@ -256,6 +268,38 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { products: data.products.filter(x => x.active) });
     }
 
+    if (p === '/api/config' && req.method === 'GET') {
+      const cfg = readConfig();
+      return sendJson(res, 200, {
+        whatsappNumber: cfg.whatsappNumber || '',
+        shopName: cfg.shopName || 'Uptempo Store',
+      });
+    }
+
+    if (p === '/api/admin/config' && req.method === 'GET') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: 'UNAUTHORIZED' });
+      return sendJson(res, 200, readConfig());
+    }
+
+    if (p === '/api/admin/config' && req.method === 'POST') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: 'UNAUTHORIZED' });
+      const body = JSON.parse(await getBody(req));
+      const cfg = readConfig();
+      if (typeof body.whatsappNumber === 'string') {
+        const num = body.whatsappNumber.replace(/[^0-9+]/g, '');
+        // Leer = nicht ändern (Schutz vor versehentlichem Löschen), ungültig = 400
+        if (num !== '') {
+          if (!/^\+?[0-9]{8,15}$/.test(num)) return sendJson(res, 400, { error: 'WHATSAPP_NUMMER_UNGUELTIG — internationales Format, z.B. +491701234567' });
+          cfg.whatsappNumber = num;
+        }
+      }
+      if (typeof body.facebookProfile === 'string') cfg.facebookProfile = body.facebookProfile.trim();
+      if (typeof body.shopName === 'string' && body.shopName.trim()) cfg.shopName = body.shopName.trim();
+      writeJsonAtomic(CONFIG_FILE, cfg);
+      log('[CONFIG] Einstellungen aktualisiert');
+      return sendJson(res, 200, { ok: true, config: cfg });
+    }
+
     if (p === '/api/order' && req.method === 'POST') {
       const body = JSON.parse(await getBody(req));
       const { customer, items } = body;
@@ -320,7 +364,8 @@ const server = http.createServer(async (req, res) => {
       writeJsonAtomic(PRODUCTS_FILE, store);
 
       log('[BESTELLUNG] ' + order.id + ' von ' + order.customer.name + ' - ' + total.toFixed(2) + ' EUR');
-      return sendJson(res, 201, { ok: true, orderId: order.id, total });
+      const cfg = readConfig();
+      return sendJson(res, 201, { ok: true, orderId: order.id, total, whatsappNumber: cfg.whatsappNumber || '' });
     }
 
     // ---- Admin ----
