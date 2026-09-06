@@ -81,27 +81,42 @@ class CatalogManager {
       list[idx] = product;
       logger.audit('CATALOG', `Produkt aktualisiert: ${product.id} (${product.name})`, { id: product.id });
     } else {
+      // Vollständiges Mapping: alle verfügbaren WaWi-Felder bewahren (kein Informationsverlust)
       product = {
         id: productData.id || 'p_' + Date.now(),
         sku: productData.sku || ('SKU-' + Date.now().toString(36).toUpperCase()),
+        supplierProductId: productData.supplierProductId || productData.id || '',
         name: productData.name || 'Neuer Artikel',
         brand: productData.brand || '',
         category: productData.category || 'Allgemein',
+        categoryId: productData.categoryId || '0',
         categoryPath: productData.categoryPath || '/',
+        color: productData.color || '',
+        type: productData.type || '',
         price: typeof productData.price === 'number' ? productData.price : 0,
         supplierEkNet: productData.supplierEkNet || 0,
+        prices: productData.prices && typeof productData.prices === 'object' ? { ...productData.prices } : {},
         sizes: Array.isArray(productData.sizes) ? productData.sizes : ['Standard'],
         variants: Array.isArray(productData.variants) ? productData.variants : [],
         stock: typeof productData.stock === 'number' ? productData.stock : 0,
         description: productData.description || '',
+        descriptionHtml: productData.descriptionHtml || productData.description || '',
         image: productData.image || '',
         images: Array.isArray(productData.images) ? productData.images : [],
+        matterhornData: productData.matterhornData && typeof productData.matterhornData === 'object' ? { ...productData.matterhornData } : (productData.matterhornData || null),
+        pricingDetails: productData.pricingDetails || null,
+        pricingDetailsByPlatform: productData.pricingDetailsByPlatform && typeof productData.pricingDetailsByPlatform === 'object' ? { ...productData.pricingDetailsByPlatform } : {},
+        channelPrices: productData.channelPrices && typeof productData.channelPrices === 'object' ? { ...productData.channelPrices } : {},
         active: productData.active !== undefined ? Boolean(productData.active) : true,
         isWhitelisted: Boolean(productData.isWhitelisted),
         status: productData.status || 'imported',
         created: productData.created || now,
         updatedAt: now,
       };
+      // Preserve any additional future fields without loss
+      for (const k of Object.keys(productData)) {
+        if (!(k in product)) product[k] = productData[k];
+      }
       list.push(product);
       logger.audit('CATALOG', `Neues Produkt angelegt: ${product.id} (${product.name})`, { id: product.id });
     }
@@ -159,9 +174,10 @@ class CatalogManager {
     return true;
   }
 
-  applyPricingRule(rule, productId = null) {
+  applyPricingRule(rule, productId = null, platformFees = {}) {
     const list = this.loadProducts();
     let updatedCount = 0;
+    const platform = platformFees._platform || 'shop';
 
     for (const p of list) {
       if (productId && p.id !== productId) continue;
@@ -170,10 +186,20 @@ class CatalogManager {
       const calc = calculateProductPrice({
         supplierNet: p.supplierEkNet,
         priceRule: rule,
-      });
+      }, platformFees);
 
-      p.price = calc.shopVkGross;
-      p.pricingDetails = calc;
+      // Master shop price stays in p.price; per-channel prices in pricingDetailsByPlatform
+      if (!p.pricingDetailsByPlatform) p.pricingDetailsByPlatform = {};
+      p.pricingDetailsByPlatform[platform] = calc;
+      // Backwards compat: keep p.pricingDetails as shop price when platform == shop
+      if (platform === 'shop') {
+        p.price = calc.shopVkGross;
+        p.pricingDetails = calc;
+      } else {
+        // For channel-specific apply, also store channelPrice shorthand for quick access
+        if (!p.channelPrices) p.channelPrices = {};
+        p.channelPrices[platform] = calc.shopVkGross;
+      }
       p.updatedAt = new Date().toISOString();
       updatedCount++;
     }

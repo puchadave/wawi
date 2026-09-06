@@ -97,6 +97,12 @@ function ensureData() {
         charmPricing: true,
         includeFreightInVk: false,
       },
+      marketplaceFees: {
+        ebay: { fixedFee: 0.35, percentageFee: 0.11 },
+        kleinanzeigen: { fixedFee: 0.00, percentageFee: 0.05 },
+        kaufland: { fixedFee: 0.00, percentageFee: 0.08 },
+        otto: { fixedFee: 0.00, percentageFee: 0.15 }
+      },
     }, null, 2));
   }
 }
@@ -536,33 +542,15 @@ const server = http.createServer(async (req, res) => {
         }
 
         let imported = 0;
+        const { normalizeMatterhornToWaWi } = require('./modules/mapper');
         const result = await parseMatterhornXml(xmlData, async (prod) => {
-          const ekNet = prod.prices && prod.prices.EUR ? prod.prices.EUR : 0;
-          catalogMgr.upsertProduct({
-            id: prod.id,
-            sku: 'MH-' + prod.id,
-            name: prod.name,
-            brand: prod.brand,
-            category: prod.categoryPath ? prod.categoryPath.split('/')[1] || 'Import' : 'Import',
-            categoryPath: prod.categoryPath,
-            supplierEkNet: ekNet,
-            price: ekNet > 0 ? Math.round(ekNet * 1.6 * 1.19) - 0.10 : 0,
-            sizes: prod.options.map(o => o.name).filter(Boolean),
-            variants: prod.options.map(o => ({
-              id: o.id,
-              name: o.name,
-              stock: o.stock || 0,
-              availableIn: o.availableIn || 0,
-              ean: o.ean || '',
-            })),
-            stock: prod.options.reduce((sum, o) => sum + (o.stock || 0), 0),
-            description: prod.descriptionHtml || '',
-            image: prod.images && prod.images[0] ? prod.images[0] : '',
-            images: prod.images || [],
-            isWhitelisted: Boolean(body.forceWhitelist),
-            active: Boolean(body.forceWhitelist),
-            status: body.forceWhitelist ? 'approved' : 'imported',
-          });
+          const waWi = normalizeMatterhornToWaWi(prod, { forceWhitelist: Boolean(body.forceWhitelist) });
+          // Default-Preis bis Pricing-Regel appliziert wird (Fallback)
+          if (!waWi.price || waWi.price <= 0) {
+            const ekNet = waWi.supplierEkNet || 0;
+            waWi.price = ekNet > 0 ? Math.round(ekNet * 1.6 * 1.19 * 100) / 100 - 0.10 : 0;
+          }
+          catalogMgr.upsertProduct(waWi);
           imported++;
         });
 
@@ -572,6 +560,10 @@ const server = http.createServer(async (req, res) => {
       // Preiskalkulator
       if (p === '/api/admin/pricing/calculate' && req.method === 'POST') {
         const body = await readBody(req);
+        const cfg = readConfig();
+        const platform = body.platform || 'shop'; // 'shop' (standard), 'ebay', 'kleinanzeigen', etc.
+        const fees = cfg.marketplaceFees && cfg.marketplaceFees[platform] ? cfg.marketplaceFees[platform] : {};
+        
         const result = calculateProductPrice({
           supplierNet: Number(body.supplierNet || 0),
           dropshippingFeeNet: Number(body.dropshippingFeeNet || 0),
@@ -586,12 +578,17 @@ const server = http.createServer(async (req, res) => {
             includeFreightInVk: Boolean(body.includeFreightInVk),
             mode: 'brutto',
           },
-        });
+        }, fees);
         return sendJson(res, 200, { ok: true, result });
       }
 
       if (p === '/api/admin/pricing/apply' && req.method === 'POST') {
         const body = await readBody(req);
+        const cfg = readConfig();
+        const platform = body.platform || 'shop';
+        const _mf = cfg.marketplaceFees && cfg.marketplaceFees[platform] ? cfg.marketplaceFees[platform] : {};
+        const fees = { ..._mf, _platform: platform };
+        
         const rule = {
           id: 'applied',
           name: 'Regel',
@@ -602,23 +599,31 @@ const server = http.createServer(async (req, res) => {
           includeFreightInVk: Boolean(body.includeFreightInVk),
           mode: 'brutto',
         };
-        const resApply = catalogMgr.applyPricingRule(rule, body.productId || null);
+        const resApply = catalogMgr.applyPricingRule(rule, body.productId || null, fees);
         return sendJson(res, 200, { ok: true, updatedCount: resApply.updatedCount });
       }
 
-      // Multi-Channel Generator Endpoints
+      // Multi-Channel Generator Endpoints (Mapper-backed, alle Felder + Optionen)
+      // GET /api/admin/channels/facebook/:id  -> Facebook Listing (legacy kompatibel)
       if (p.startsWith('/api/admin/channels/facebook/') && req.method === 'GET') {
         const prodId = p.split('/')[5];
         const prod = catalogMgr.getById(prodId);
         if (!prod) return sendJson(res, 404, { ok: false, error: 'Produkt nicht gefunden' });
-        return sendJson(res, 200, { ok: true, listing: channelsMgr.generateFacebookListing(prod) });
+        const { mapWaWiToFacebook } = require('./modules/mapper');
+        const mapped = mapWaWiToFacebook(prod);
+        // Legacy Format beibehalten + Mapping anhaengen
+        const legacy = channelsMgr.generateFacebookListing(prod);
+        return sendJson(res, 200, { ok: true, listing: legacy, mapped });
       }
 
       if (p.startsWith('/api/admin/channels/kleinanzeigen/') && req.method === 'GET') {
         const prodId = p.split('/')[5];
         const prod = catalogMgr.getById(prodId);
         if (!prod) return sendJson(res, 404, { ok: false, error: 'Produkt nicht gefunden' });
-        return sendJson(res, 200, { ok: true, listing: channelsMgr.generateKleinanzeigenListing(prod) });
+        const { mapWaWiToKleinanzeigen } = require('./modules/mapper');
+        const mapped = mapWaWiToKleinanzeigen(prod);
+        const legacy = channelsMgr.generateKleinanzeigenListing(prod);
+        return sendJson(res, 200, { ok: true, listing: legacy, mapped });
       }
 
       if (p.startsWith('/api/admin/channels/telegram/') && req.method === 'GET') {
@@ -635,6 +640,52 @@ const server = http.createServer(async (req, res) => {
           'Content-Disposition': 'attachment; filename="products-feed.csv"',
         });
         return res.end(csv);
+      }
+
+      // Unified Channel Mapping API (reibugslose Uebertragung)
+      // GET /api/admin/channels/map/:channel/:id  -> channel in shop,shopware,ebay,kleinanzeigen,kaufland,otto,google,facebook
+      if (p.startsWith('/api/admin/channels/map/') && req.method === 'GET') {
+        const parts = p.split('/');
+        // /api/admin/channels/map/<channel>/<id>
+        const channel = parts[5] || 'shop';
+        const prodId = parts[6] || '';
+        const prod = catalogMgr.getById(prodId);
+        if (!prod) return sendJson(res, 404, { ok: false, error: 'Produkt nicht gefunden' });
+        const { mapWaWiToChannel } = require('./modules/mapper');
+        const urlObj = new URL(req.url, 'http://localhost');
+        const baseUrl = urlObj.searchParams.get('baseUrl') || `http://localhost:${PORT}`;
+        const mapped = mapWaWiToChannel(prod, channel, { baseUrl });
+        return sendJson(res, 200, { ok: true, channel, id: prodId, mapped });
+      }
+
+      // POST /api/admin/channels/map/:channel  { ids: [...] } -> Batch-Mapping
+      if (p.startsWith('/api/admin/channels/map/') && req.method === 'POST') {
+        const parts = p.split('/');
+        const channel = parts[5] || 'shop';
+        const body = await readBody(req);
+        const ids = Array.isArray(body.ids) ? body.ids : [];
+        if (!ids.length) return sendJson(res, 400, { ok: false, error: 'ids[] erforderlich' });
+        const { mapWaWiToChannel } = require('./modules/mapper');
+        const urlObj = new URL(req.url, 'http://localhost');
+        const baseUrl = body.baseUrl || urlObj.searchParams.get('baseUrl') || `http://localhost:${PORT}`;
+        const items = [];
+        for (const id of ids) {
+          const prod = catalogMgr.getById(String(id));
+          if (!prod) { items.push({ id, ok: false, error: 'nicht gefunden' }); continue; }
+          items.push({ id, ok: true, mapped: mapWaWiToChannel(prod, channel, { baseUrl }) });
+        }
+        return sendJson(res, 200, { ok: true, channel, count: items.length, items });
+      }
+
+      // GET /api/admin/channels/export/:channel  -> Export aller whitelisted Produkte fuer Channel
+      if (p.startsWith('/api/admin/channels/export/') && req.method === 'GET') {
+        const channel = p.split('/')[5] || 'shop';
+        const list = catalogMgr.loadProducts().filter(pr => pr.isWhitelisted || pr.active);
+        const { mapWaWiToChannel } = require('./modules/mapper');
+        const urlObj = new URL(req.url, 'http://localhost');
+        const baseUrl = urlObj.searchParams.get('baseUrl') || `http://localhost:${PORT}`;
+        const items = list.map(pr => mapWaWiToChannel(pr, channel, { baseUrl }));
+        return sendJson(res, 200, { ok: true, channel, count: items.length, items });
       }
 
       // Config
@@ -662,6 +713,9 @@ const server = http.createServer(async (req, res) => {
         if (typeof body.stripePaymentLink === 'string') cfg.stripePaymentLink = body.stripePaymentLink.trim();
         if (body.pricingRules && typeof body.pricingRules === 'object') {
           cfg.pricingRules = { ...cfg.pricingRules, ...body.pricingRules };
+        }
+        if (body.marketplaceFees && typeof body.marketplaceFees === 'object') {
+          cfg.marketplaceFees = { ...cfg.marketplaceFees, ...body.marketplaceFees };
         }
 
         writeJsonAtomic(CONFIG_FILE, cfg);

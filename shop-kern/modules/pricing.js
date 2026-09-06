@@ -28,10 +28,13 @@ const { logger } = require('./logger');
  */
 
 /**
- * Berechnet den Verkaufspreis nach den WaWi-Preisregeln.
+ * Berechnet den Verkaufspreis nach den WaWi-Preisregeln unter Berücksichtigung von Plattformgebühren.
  * @param {PricingCalculationInput} input
+ * @param {Object} [platformFees] - Optionale plattformspezifische Gebühren
+ * @param {number} [platformFees.fixedFee] - Fixe Gebühr pro Verkauf (Netto)
+ * @param {number} [platformFees.percentageFee] - Prozentuale Gebühr pro Verkauf (als Dezimalwert, z.B. 0.11 für 11%)
  */
-function calculateProductPrice(input) {
+function calculateProductPrice(input, platformFees = {}) {
   const {
     supplierNet,
     dropshippingFeeNet = 0,
@@ -43,11 +46,19 @@ function calculateProductPrice(input) {
 
   // 1. Shop-EK Netto = supplierNet + dropshipFee + fixedSurcharge + freight (if applicable)
   const freightToAdd = priceRule.includeFreightInVk ? freightAllocatedNet : 0;
-  const shopEkNet = supplierNet + dropshippingFeeNet + fixedSurchargeNet + freightToAdd;
+  let shopEkNet = supplierNet + dropshippingFeeNet + fixedSurchargeNet + freightToAdd;
+
+  // 1.1. Plattform-Fixgebühr auf EK aufschlagen
+  if (platformFees.fixedFee) {
+    shopEkNet += platformFees.fixedFee;
+  }
 
   // 2. VK Netto aus Zielmarge: Marge = (VK - EK) / VK => VK = EK / (1 - Marge)
-  const marginFactor = 1 - priceRule.targetMargin;
-  let shopVkNet = marginFactor > 0 ? shopEkNet / marginFactor : shopEkNet * 1.5;
+  // Unter Berücksichtigung von prozentualen Plattform-Gebühren:
+  // Marge = (VK * (1 - Gebühr) - EK) / VK => VK = EK / (1 - Marge - Gebühr)
+  const percentageFee = platformFees.percentageFee || 0;
+  const effectiveMarginFactor = 1 - priceRule.targetMargin - percentageFee;
+  let shopVkNet = effectiveMarginFactor > 0 ? shopEkNet / effectiveMarginFactor : shopEkNet * 1.5;
 
   // 3. MwSt & Brutto
   const vatRate = priceRule.vatRate !== undefined ? priceRule.vatRate : 0.19;
@@ -63,8 +74,8 @@ function calculateProductPrice(input) {
   const r2 = (n) => Math.round(n * 100) / 100;
 
   const vatAmount = r2(shopVkGross - shopVkNet);
-  const marginAmountNet = r2(shopVkNet - shopEkNet);
-  const marginPercent = shopVkNet > 0 ? marginAmountNet / shopVkNet : 0;
+  const marginAmountNet = Math.round(((shopVkNet * (1 - percentageFee)) - shopEkNet) * 100) / 100;
+  const marginPercent = shopVkNet > 0 ? Math.round((marginAmountNet / shopVkNet) * 1000) / 1000 : 0;
 
   const result = {
     supplierNet: r2(supplierNet),
