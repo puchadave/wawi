@@ -41,6 +41,30 @@
       <button id="refreshBtn">Aktualisieren</button>
       <a href="/api/admin/export" id="exportBtn" style="padding:10px 12px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text);font-size:.95rem;">CSV-Export (Versand)</a>
     </div>
+
+    <h2>Verkaufen über WhatsApp & Facebook</h2>
+    <div class="order-box">
+      <p style="color:var(--muted);font-size:.85rem;margin-bottom:8px">
+        WhatsApp-Nummer (international, z.B. <b>+491701234567</b>) — erscheint als "WhatsApp bestellen" im Shop.
+        Facebook-Profil (für Marketplace) — erzeugt den Direktlink zur Listing-Erstellung.
+      </p>
+      <div class="toolbar">
+        <input type="text" id="cfgWa" placeholder="+491701234567" style="max-width:200px">
+        <input type="text" id="cfgFb" placeholder="facebook.com/deinprofil" style="max-width:240px">
+        <button id="cfgSaveBtn">Speichern</button>
+        <span id="cfgMsg" class="result ok"></span>
+      </div>
+      <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px">
+        <b>Marketplace-Listing erstellen:</b>
+        <div class="toolbar">
+          <select id="mpProduct" aria-label="Produkt wählen"></select>
+          <button id="mpCopyBtn">Listing-Text kopieren</button>
+          <a id="mpFbLink" href="https://www.facebook.com/marketplace/create/" target="_blank" rel="noopener" style="padding:10px 12px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text);font-size:.95rem;">Bei Facebook öffnen</a>
+        </div>
+        <textarea id="mpText" rows="5" readonly style="width:100%;margin-top:8px;font-family:monospace;font-size:.8rem"></textarea>
+      </div>
+    </div>
+
     <div id="ordersBox"></div>
   </section>
 </main>
@@ -73,6 +97,12 @@ async function loadOrders() {
     const div = document.createElement('div');
     div.className = 'order-box';
     const items = o.items.map(i => `${esc(i.name)} (${esc(i.size)}) x${i.qty} — ${money(i.total)}`).join('<br>');
+    const custWa = o.customer.phone ? o.customer.phone.replace(/[^0-9]/g, '') : '';
+    let waBtns = '';
+    if (custWa.length >= 8) {
+      const waTxt = `Hallo ${esc(o.customer.name)}! Zu deiner Bestellung ${esc(o.id)} (${money(o.total)}): Status ${esc(o.status)}.`;
+      waBtns += `<a href="https://wa.me/${custWa}?text=${encodeURIComponent(waTxt)}" target="_blank" rel="noopener" style="display:inline-block;padding:8px 12px;border:1px solid #25d366;border-radius:8px;color:#25d366;text-decoration:none;font-size:.85rem;margin-right:6px">WhatsApp-Nachricht</a>`;
+    }
     div.innerHTML = `
       <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
         <b>${esc(o.id)}</b>
@@ -91,6 +121,7 @@ async function loadOrders() {
         <button data-st="VERSENDET" data-id="${esc(o.id)}" data-track="1">Versendet (DHL-Nr.)</button>
         <button data-st="ABGESCHLOSSEN" data-id="${esc(o.id)}">Abgeschlossen</button>
         <button data-st="STORNIERT" data-id="${esc(o.id)}" style="color:var(--accent)">Storniert</button>
+        ${waBtns}
       </div>
     `;
     box.appendChild(div);
@@ -116,7 +147,75 @@ document.getElementById('loginBtn').addEventListener('click', login);
 document.getElementById('refreshBtn').addEventListener('click', loadOrders);
 document.getElementById('pw').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
 
-if (token) { document.getElementById('loginBox').style.display = 'none'; document.getElementById('adminBox').style.display = 'block'; loadOrders(); }
+/* ---- WhatsApp/Facebook-Konfiguration ---- */
+async function loadConfigAdmin() {
+  const r = await fetch('/api/admin/config', { headers: { 'x-admin-token': token } });
+  if (!r.ok) return;
+  const cfg = await r.json();
+  document.getElementById('cfgWa').value = cfg.whatsappNumber || '';
+  document.getElementById('cfgFb').value = cfg.facebookProfile || '';
+}
+document.getElementById('cfgSaveBtn').addEventListener('click', async () => {
+  const msg = document.getElementById('cfgMsg');
+  const r = await fetch('/api/admin/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+    body: JSON.stringify({
+      whatsappNumber: document.getElementById('cfgWa').value,
+      facebookProfile: document.getElementById('cfgFb').value,
+    }),
+  });
+  const d = await r.json();
+  msg.textContent = r.ok ? 'Gespeichert ✓' : 'Fehler: ' + d.error;
+  msg.className = 'result ' + (r.ok ? 'ok' : 'err');
+});
+
+/* ---- Marketplace-Listing-Generator ---- */
+async function loadProductsAdmin() {
+  const r = await fetch('/api/products');
+  const d = await r.json();
+  const sel = document.getElementById('mpProduct');
+  sel.innerHTML = '';
+  for (const p of d.products) {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name + ' — ' + money(p.price);
+    sel.appendChild(opt);
+  }
+  if (d.products.length) renderMp();
+}
+function renderMp() {
+  const sel = document.getElementById('mpProduct');
+  const opt = sel.selectedOptions[0];
+  if (!opt) return;
+  const name = opt.textContent.split(' — ')[0];
+  fetch('/api/products').then(r => r.json()).then(d => {
+    const p = d.products.find(x => x.name === name);
+    if (!p) return;
+    const lines = [
+      p.name,
+      p.price.toFixed(2).replace('.', ',') + ' EUR',
+      'Größen: ' + p.sizes.join(', '),
+      p.description,
+      '',
+      '1) Abholung möglich  2) Express-Versand (DHL mit Sendungsverfolgung)',
+      'Zahlung: Überweisung oder PayPal',
+    ];
+    document.getElementById('mpText').value = lines.join('\n');
+    const fb = document.getElementById('cfgFb').value;
+    const mpLink = document.getElementById('mpFbLink');
+    if (fb) mpLink.href = 'https://www.facebook.com/marketplace/create/?ref=' + encodeURIComponent(fb.replace(/^https?:\/\//, '').replace(/^www\./, ''));
+  });
+}
+document.getElementById('mpProduct').addEventListener('change', renderMp);
+document.getElementById('mpCopyBtn').addEventListener('click', async () => {
+  const txt = document.getElementById('mpText').value;
+  try { await navigator.clipboard.writeText(txt); alert('Listing-Text kopiert — in Marketplace einfügen.'); }
+  catch (e) { document.getElementById('mpText').select(); document.execCommand('copy'); alert('Listing-Text kopiert (manuell: Strg+C).'); }
+});
+document.getElementById('cfgFb').addEventListener('change', renderMp);
+
+if (token) { document.getElementById('loginBox').style.display = 'none'; document.getElementById('adminBox').style.display = 'block'; loadOrders(); loadConfigAdmin(); loadProductsAdmin(); }
 </script>
 </body>
 </html>

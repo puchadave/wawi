@@ -1,9 +1,26 @@
-/* WaWi Shop-Kern v2.0 — Shop-Logik (Vanilla JS, kein CDN) */
+/* WaWi Shop-Kern v2.0 — Shop-Logik (Vanilla JS, kein CDN)
+   Inkl. WhatsApp-Klick-zu-Chat und Facebook-Marketplace-Weiterleitung */
 'use strict';
 
 let cart = JSON.parse(localStorage.getItem('wawi-cart') || '[]');
+let SHOP_CFG = { whatsappNumber: '', shopName: 'Uptempo Store' };
 
 function money(n) { return n.toFixed(2).replace('.', ',') + ' EUR'; }
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function waLink(number, text) {
+  return 'https://wa.me/' + number.replace(/[^0-9]/g, '') + '?text=' + encodeURIComponent(text);
+}
+
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/config');
+    if (r.ok) SHOP_CFG = await r.json();
+  } catch (e) { /* Shop läuft auch ohne Config */ }
+}
 
 async function loadProducts() {
   const r = await fetch('/api/products');
@@ -13,6 +30,9 @@ async function loadProducts() {
   for (const p of data.products) {
     const card = document.createElement('div');
     card.className = 'card';
+    const waBtn = SHOP_CFG.whatsappNumber
+      ? `<button class="wa" data-wa="${esc(p.id)}" data-waname="${esc(p.name)}" data-waprice="${p.price}">WhatsApp bestellen</button>`
+      : '';
     card.innerHTML = `
       <span class="cat">${p.category}</span>
       <h3>${esc(p.name)}</h3>
@@ -23,6 +43,7 @@ async function loadProducts() {
         ${p.sizes.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('')}
       </select>
       <button class="primary" data-add="${p.id}">In den Warenkorb</button>
+      ${waBtn}
     `;
     grid.appendChild(card);
   }
@@ -39,10 +60,14 @@ async function loadProducts() {
       document.getElementById('cartBtn').scrollIntoView({ behavior: 'smooth' });
     });
   });
-}
-
-function esc(s) {
-  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  document.querySelectorAll('[data-wa]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.card');
+      const size = card.querySelector('[data-size]').value;
+      const text = `Hallo! Ich möchte folgendes bestellen:\n\n▪ ${btn.dataset.waname} (${size}) — ${money(+btn.dataset.waprice)}\n\nLieferung bitte per Express.`;
+      window.open(waLink(SHOP_CFG.whatsappNumber, text), '_blank', 'noopener');
+    });
+  });
 }
 
 function saveCart() {
@@ -60,7 +85,6 @@ function renderCart() {
   }
   document.getElementById('orderForm').style.display = 'flex';
   box.innerHTML = '';
-  let total = 0;
   cart.forEach((c, i) => {
     const item = document.createElement('div');
     item.className = 'cart-item';
@@ -73,7 +97,6 @@ function renderCart() {
       </div>
     `;
     box.appendChild(item);
-    total += c.qty * 1; // Preis wird serverseitig verbindlich ermittelt
   });
   const t = document.createElement('div');
   t.className = 'cart-total';
@@ -121,8 +144,13 @@ document.getElementById('orderForm').addEventListener('submit', async (ev) => {
     });
     const data = await r.json();
     if (r.ok) {
+      let html = `Bestellung ${data.orderId} eingegangen — Summe ${money(data.total)}. Du erhältst die Bestätigung per E-Mail.`;
+      if (data.whatsappNumber) {
+        const txt = `Hallo! Ich habe soeben im ${SHOP_CFG.shopName} bestellt:\n\nBestellnummer: ${data.orderId}\nSumme: ${money(data.total)}\nName: ${payload.customer.name}\n\nMeine Bestellung bestätigen?`;
+        html += `<br><br><a class="wa-btn" href="${waLink(data.whatsappNumber, txt)}" target="_blank" rel="noopener">Bestellung jetzt per WhatsApp bestätigen</a>`;
+      }
       resEl.className = 'result ok';
-      resEl.textContent = `Bestellung ${data.orderId} eingegangen — Summe ${money(data.total)}. Du erhältst die Bestätigung per E-Mail.`;
+      resEl.innerHTML = html;
       cart = [];
       saveCart();
       renderCart();
@@ -140,5 +168,5 @@ document.getElementById('orderForm').addEventListener('submit', async (ev) => {
   }
 });
 
-loadProducts();
+loadConfig().then(loadProducts);
 renderCart();
