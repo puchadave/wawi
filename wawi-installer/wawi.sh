@@ -793,7 +793,8 @@ deploy_docker() {
                 pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y git" || true
             fi
         else
-            pct exec "$CTID" -- bash -c "apk add --no-cache git" || true
+            # Alpine: bash ist im frischen LXC NICHT vorinstalliert -> /bin/sh verwenden
+            pct exec "$CTID" -- /bin/sh -c "apk update && apk add --no-cache git curl bash nodejs npm" || true
         fi
     fi
     if ! pct exec "$CTID" -- bash -c "command -v git >/dev/null 2>&1"; then
@@ -932,7 +933,8 @@ deploy_docker() {
                 pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y git" || true
             fi
         else
-            pct exec "$CTID" -- bash -c "apk add --no-cache git" || true
+            # Alpine: bash ist im frischen LXC NICHT vorinstalliert -> /bin/sh verwenden
+            pct exec "$CTID" -- /bin/sh -c "apk update && apk add --no-cache git curl bash nodejs npm" || true
         fi
     fi
     if ! pct exec "$CTID" -- bash -c "command -v git >/dev/null 2>&1"; then err "Git installation failed - Clone abgebrochen"; exit 1; fi
@@ -1020,7 +1022,8 @@ deploy_nativ() {
                 pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y git" || true
             fi
         else
-            pct exec "$CTID" -- bash -c "apk add --no-cache git" || true
+            # Alpine: bash ist im frischen LXC NICHT vorinstalliert -> /bin/sh verwenden
+            pct exec "$CTID" -- /bin/sh -c "apk update && apk add --no-cache git curl bash nodejs npm" || true
         fi
     fi
     if ! pct exec "$CTID" -- bash -c "command -v git >/dev/null 2>&1"; then err "Git installation failed - git weiterhin nicht verfuegbar"; exit 1; fi
@@ -1192,7 +1195,8 @@ deploy_nativ() {
                 pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq; apt-get install -y git" || true
             fi
         else
-            pct exec "$CTID" -- bash -c "apk add --no-cache git" || true
+            # Alpine: bash ist im frischen LXC NICHT vorinstalliert -> /bin/sh verwenden
+            pct exec "$CTID" -- /bin/sh -c "apk update && apk add --no-cache git curl bash nodejs npm" || true
         fi
     fi
     if ! pct exec "$CTID" -- bash -c "command -v git >/dev/null 2>&1"; then err "Git installation failed - Clone abgebrochen"; exit 1; fi
