@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WaWi Admin — Bestellungen & Versand</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  .login-msg { color: var(--warn); margin: 8px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); text-transform: uppercase; font-size: .72rem; letter-spacing: .05em; }
+  .st { padding: 2px 8px; border-radius: 20px; font-size: .72rem; font-weight: 700; }
+  .st-NEU { background: rgba(241,196,15,.15); color: var(--warn); }
+  .st-BEZAHLT { background: rgba(46,204,113,.15); color: var(--ok); }
+  .st-VERSENDET { background: rgba(52,152,219,.15); color: #3498db; }
+  .st-ABGESCHLOSSEN { background: rgba(155,89,182,.15); color: #9b59b6; }
+  .st-STORNIERT { background: rgba(232,60,94,.15); color: var(--accent); }
+  .order-box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; align-items: center; }
+  .badge { color: var(--accent); font-weight: 700; }
+</style>
+</head>
+<body>
+<header class="topbar"><div class="wrap"><div class="brand">WaWi<span>ADMIN</span></div><div class="cartlink"><a href="/">Shop-Ansicht</a></div></div></header>
+
+<main class="wrap">
+  <section id="loginBox">
+    <h2>Admin-Login</h2>
+    <p class="login-msg">Passwort liegt im Container unter: data/admin-passwort.txt</p>
+    <div class="toolbar">
+      <input type="password" id="pw" placeholder="Admin-Passwort" style="max-width:280px">
+      <button class="primary" id="loginBtn">Anmelden</button>
+      <span id="loginErr" class="result err"></span>
+    </div>
+  </section>
+
+  <section id="adminBox" style="display:none">
+    <h2>Bestellungen <span id="orderCount" class="badge"></span></h2>
+    <div class="toolbar">
+      <button id="refreshBtn">Aktualisieren</button>
+      <a href="/api/admin/export" id="exportBtn" style="padding:10px 12px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text);font-size:.95rem;">CSV-Export (Versand)</a>
+    </div>
+    <div id="ordersBox"></div>
+  </section>
+</main>
+
+<script>
+'use strict';
+let token = localStorage.getItem('wawi-admin-token') || '';
+
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function money(n) { return n.toFixed(2).replace('.', ',') + ' EUR'; }
+function fmt(d) { return new Date(d).toLocaleString('de-DE'); }
+
+async function login() {
+  const pw = document.getElementById('pw').value;
+  const r = await fetch('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) });
+  const data = await r.json();
+  if (r.ok) { token = data.token; localStorage.setItem('wawi-admin-token', token); document.getElementById('loginBox').style.display = 'none'; document.getElementById('adminBox').style.display = 'block'; await loadOrders(); }
+  else document.getElementById('loginErr').textContent = 'Login fehlgeschlagen';
+}
+
+async function loadOrders() {
+  const r = await fetch('/api/admin/orders', { headers: { 'x-admin-token': token } });
+  if (r.status === 401) { document.getElementById('loginBox').style.display = 'block'; document.getElementById('adminBox').style.display = 'none'; return; }
+  const data = await r.json();
+  const orders = data.orders || [];
+  document.getElementById('orderCount').textContent = orders.length + ' offen/gesamt';
+  const box = document.getElementById('ordersBox');
+  box.innerHTML = '';
+  for (const o of orders) {
+    const div = document.createElement('div');
+    div.className = 'order-box';
+    const items = o.items.map(i => `${esc(i.name)} (${esc(i.size)}) x${i.qty} — ${money(i.total)}`).join('<br>');
+    div.innerHTML = `
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <b>${esc(o.id)}</b>
+        <span class="st st-${esc(o.status)}">${esc(o.status)}</span>
+      </div>
+      <div style="color:var(--muted);font-size:.8rem;margin:4px 0">${fmt(o.created)}</div>
+      <div><b>${esc(o.customer.name)}</b> — ${esc(o.customer.email)}${o.customer.phone ? ' — Tel: ' + esc(o.customer.phone) : ''}</div>
+      <div style="color:var(--muted)">${esc(o.customer.street)}, ${esc(o.customer.zip)} ${esc(o.customer.city)}</div>
+      ${o.customer.note ? '<div style="color:var(--warn)">Hinweis: ' + esc(o.customer.note) + '</div>' : ''}
+      <div style="margin-top:8px">${items}</div>
+      <div style="margin-top:8px;font-weight:700">Gesamt: ${money(o.total)}</div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button data-st="BEZAHLT" data-id="${esc(o.id)}">Bezahlt</button>
+        <button data-st="VERSENDET" data-id="${esc(o.id)}">Versendet</button>
+        <button data-st="ABGESCHLOSSEN" data-id="${esc(o.id)}">Abgeschlossen</button>
+        <button data-st="STORNIERT" data-id="${esc(o.id)}" style="color:var(--accent)">Storniert</button>
+      </div>
+    `;
+    box.appendChild(div);
+  }
+  box.querySelectorAll('[data-st]').forEach(b => b.addEventListener('click', async () => {
+    const r = await fetch('/api/admin/order/status', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-admin-token': token }, body: JSON.stringify({ id: b.dataset.id, status: b.dataset.st }) });
+    if (r.ok) await loadOrders();
+  }));
+}
+
+document.getElementById('loginBtn').addEventListener('click', login);
+document.getElementById('refreshBtn').addEventListener('click', loadOrders);
+document.getElementById('pw').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+
+if (token) { document.getElementById('loginBox').style.display = 'none'; document.getElementById('adminBox').style.display = 'block'; loadOrders(); }
+</script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Uptempo Store — Festival Wear</title>
+<meta name="description" content="Uptempo Hardcore Festival-Bekleidung. Direkt vom Lager, Express-Versand.">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <div class="brand">UPTEMPO<span>STORE</span></div>
+    <div class="cartlink"><a href="#kasse" id="cartBtn">Warenkorb (<b id="cartCount">0</b>)</a></div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <h1>Festival Wear. Richtige Parts. Jetzt vorbestellen.</h1>
+    <p>Express-Versand zur Shoperöffnung — deine Ware pünktlich vor Ort.</p>
+  </section>
+
+  <section id="produkte">
+    <h2>Sortiment</h2>
+    <div id="productGrid" class="grid"></div>
+  </section>
+
+  <section id="kasse" class="kasse">
+    <h2>Kasse</h2>
+    <div id="cartBox"></div>
+    <form id="orderForm" class="form">
+      <div class="row">
+        <input type="text" id="fName" placeholder="Vor- und Nachname *" required autocomplete="name">
+        <input type="email" id="fEmail" placeholder="E-Mail *" required autocomplete="email">
+      </div>
+      <div class="row">
+        <input type="tel" id="fPhone" placeholder="Telefon (für Express-Lieferung)" autocomplete="tel">
+        <input type="text" id="fZip" placeholder="PLZ *" required autocomplete="postal-code">
+      </div>
+      <input type="text" id="fStreet" placeholder="Straße und Hausnummer *" required autocomplete="street-address">
+      <input type="text" id="fCity" placeholder="Ort *" required autocomplete="address-level2">
+      <textarea id="fNote" placeholder="Hinweis zur Lieferung (optional)"></textarea>
+      <p class="dsgvo">Mit Absenden der Bestellung willigst du ein, dass deine Daten ausschließlich zur Bearbeitung dieser Bestellung verarbeitet werden (Art. 6 Abs. 1 lit. b DSGVO). Keine Weitergabe an Dritte, keine Werbung.</p>
+      <button type="submit" id="orderBtn">Bestellung verbindlich aufgeben</button>
+      <p id="orderResult" class="result"></p>
+    </form>
+  </section>
+</main>
+
+<footer class="wrap">
+  <p>Uptempo Store — Angaben gem. §5 TMG auf Anfrage. <a href="/admin.html">Admin</a></p>
+</footer>
+
+<script src="/shop.js"></script>
+</body>
+</html>
