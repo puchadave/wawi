@@ -204,6 +204,19 @@ function validEmail(e) {
   return typeof e === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e.trim());
 }
 
+/* ---------- DHL Live-Tracking (echte Sendungsnummer, kein Fake) ---------- */
+
+function dhlTracking(number) {
+  const n = String(number || '').trim();
+  if (!n) return null;
+  return {
+    carrier: 'DHL',
+    number: n,
+    url: 'https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=' + encodeURIComponent(n),
+    at: new Date().toISOString(),
+  };
+}
+
 /* ---------- Shop-Frontend ---------- */
 
 function servePublic(res, urlPath) {
@@ -340,6 +353,18 @@ const server = http.createServer(async (req, res) => {
       if (!allowed.includes(body.status)) return sendJson(res, 400, { error: 'STATUS_UNGUELTIG' });
       o.status = body.status;
       o.updated = new Date().toISOString();
+      // Beim Versand: echte DHL-Sendungsnummer hinterlegen (Live-Tracking, kein Fake)
+      if (body.status === 'VERSENDET') {
+        if (body.tracking && String(body.tracking).trim()) {
+          o.tracking = dhlTracking(body.tracking);
+          if (body.carrier === 'kein-dhl') {
+            o.tracking.carrier = 'ANDERER_DIENST';
+          }
+        } else {
+          o.tracking = null;
+          o.trackingWarning = 'Keine DHL-Sendungsnummer hinterlegt — Sendungsverfolgung fehlt!';
+        }
+      }
       writeJsonAtomic(ORDERS_FILE, orders);
       log('[STATUS] ' + o.id + ' -> ' + o.status);
       return sendJson(res, 200, { ok: true, order: o });
@@ -348,10 +373,12 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/admin/export' && req.method === 'GET') {
       if (!isAuthed(req)) return sendJson(res, 401, { error: 'UNAUTHORIZED' });
       const orders = readJson(ORDERS_FILE, { orders: [] });
-      const lines = ['Bestellnr;Datum;Status;Name;Email;PLZ;Ort;Strasse;Artikel;Anzahl;Summe'];
+      const lines = ['Bestellnr;Datum;Status;Name;Email;PLZ;Ort;Strasse;Artikel;Anzahl;Summe;Tracking;Tracking-Link'];
       for (const o of orders.orders) {
         const artik = o.items.map(i => i.sku + 'x' + i.qty).join('|');
-        lines.push([o.id, o.created, o.status, o.customer.name, o.customer.email, o.customer.zip, o.customer.city, o.customer.street, artik, o.items.reduce((a, i) => a + i.qty, 0), o.total.toFixed(2)].join(';'));
+        const tr = o.tracking ? o.tracking.number : '';
+        const trUrl = o.tracking ? o.tracking.url : '';
+        lines.push([o.id, o.created, o.status, o.customer.name, o.customer.email, o.customer.zip, o.customer.city, o.customer.street, artik, o.items.reduce((a, i) => a + i.qty, 0), o.total.toFixed(2), tr, trUrl].join(';'));
       }
       const csv = lines.join('\n');
       const buf = Buffer.from('\uFEFF' + csv, 'utf8');

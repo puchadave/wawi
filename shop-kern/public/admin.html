@@ -84,9 +84,11 @@ async function loadOrders() {
       ${o.customer.note ? '<div style="color:var(--warn)">Hinweis: ' + esc(o.customer.note) + '</div>' : ''}
       <div style="margin-top:8px">${items}</div>
       <div style="margin-top:8px;font-weight:700">Gesamt: ${money(o.total)}</div>
+      ${o.tracking ? `<div style="margin-top:8px;color:var(--ok);font-size:.85rem">📦 ${esc(o.tracking.carrier)} — <a href="${esc(o.tracking.url)}" target="_blank" rel="noopener">Sendung ${esc(o.tracking.number)} verfolgen (Live-Tracking)</a></div>` : ''}
+      ${o.trackingWarning ? `<div style="margin-top:8px;color:var(--warn);font-size:.85rem">⚠ ${esc(o.trackingWarning)}</div>` : ''}
       <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
         <button data-st="BEZAHLT" data-id="${esc(o.id)}">Bezahlt</button>
-        <button data-st="VERSENDET" data-id="${esc(o.id)}">Versendet</button>
+        <button data-st="VERSENDET" data-id="${esc(o.id)}" data-track="1">Versendet (DHL-Nr.)</button>
         <button data-st="ABGESCHLOSSEN" data-id="${esc(o.id)}">Abgeschlossen</button>
         <button data-st="STORNIERT" data-id="${esc(o.id)}" style="color:var(--accent)">Storniert</button>
       </div>
@@ -94,8 +96,19 @@ async function loadOrders() {
     box.appendChild(div);
   }
   box.querySelectorAll('[data-st]').forEach(b => b.addEventListener('click', async () => {
-    const r = await fetch('/api/admin/order/status', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-admin-token': token }, body: JSON.stringify({ id: b.dataset.id, status: b.dataset.st }) });
+    let payload = { id: b.dataset.id, status: b.dataset.st };
+    // Bei VERSENDET: echte DHL-Sendungsnummer erfassen (kein Fake-Tracking)
+    if (b.dataset.st === 'VERSENDET' && b.dataset.track) {
+      const num = prompt('Echte DHL-Sendungsnummer eingeben (Live-Tracking):', '');
+      if (num === null) return; // abgebrochen
+      payload.tracking = num.trim();
+    }
+    const r = await fetch('/api/admin/order/status', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-admin-token': token }, body: JSON.stringify(payload) });
     if (r.ok) await loadOrders();
+    else {
+      const d = await r.json().catch(() => ({}));
+      alert('Fehler: ' + (d.error || r.status));
+    }
   }));
 }
 
