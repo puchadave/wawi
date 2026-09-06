@@ -2,6 +2,7 @@
 # WaWi Shop-Kern v2.0 — LXC-Installation auf Proxmox VE (nativ, ohne Docker)
 # Aufruf auf dem PVE-Host:  sh deploy-lxc.sh
 # Erstellt LXC, installiert nodejs nativ, kopiert shop-kern, OpenRC-Autostart.
+# Lädt die Shop-Dateien bei Bedarf selbst von GitHub (kein git, kein Clone nötig).
 set -e
 
 CTID="${CTID:-}"
@@ -11,6 +12,7 @@ TEMPLATE="${TEMPLATE:-alpine-3.20-default}"
 RAM="${RAM:-2048}"
 CPU="${CPU:-2}"
 DISK="${DISK:-8}"
+GITHUB_RAW="${GITHUB_RAW:-https://raw.githubusercontent.com/puchadave/wawi/master/shop-kern}"
 
 info() { echo "[i] $*"; }
 err()  { echo "[FEHLER] $*" >&2; exit 1; }
@@ -59,21 +61,31 @@ done
 info "Installiere nodejs (nativ, Alpine) ..."
 pct exec "$CTID" -- /bin/sh -c "apk update && apk add --no-cache nodejs npm ca-certificates"
 
-info "Kopiere shop-kern in Container ..."
-pct push "$CTID" "$(dirname "$0")" /opt/wawi 2>/dev/null || \
-  pct exec "$CTID" -- mkdir -p /opt/wawi
-if [ -d "$(dirname "$0")/../shop-kern" ]; then
-  pct push "$CTID" "$(dirname "$0")/../shop-kern" /opt/wawi-shop 2>/dev/null || true
+# Shop-Dateien sicherstellen: lokal vorhanden? sonst von GitHub laden
+SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SRC_DIR/server.js" ]; then
+  LOCAL_SRC="$SRC_DIR"
+else
+  LOCAL_SRC=""
 fi
-# Falls shop-kern direkt im aktuellen Verzeichnis liegt
-if [ -d "$(dirname "$0")/shop-kern" ]; then
-  pct exec "$CTID" -- mkdir -p /opt/wawi-shop
-  pct push "$CTID" "$(dirname "$0")/shop-kern" /opt/wawi 2>/dev/null || true
-  # Unterverzeichnisse einzeln pushen (pct push kopiert keinen Ordner)
-  for f in shop-kern/server.js shop-kern/public/index.html shop-kern/public/style.css shop-kern/public/shop.js shop-kern/public/admin.html; do
-    [ -f "$f" ] && pct push "$CTID" "$f" "/opt/wawi/$(basename "$f")"
+
+if [ -z "$LOCAL_SRC" ]; then
+  info "Lade Shop-Kern von GitHub ..."
+  command -v curl >/dev/null 2>&1 || { apt-get update >/dev/null 2>&1; apt-get install -y curl >/dev/null 2>&1 || apk add --no-cache curl >/dev/null 2>&1; }
+  TMPDIR_DL="/root/wawi-shop-dl"
+  rm -rf "$TMPDIR_DL" && mkdir -p "$TMPDIR_DL"
+  for f in server.js public/index.html public/style.css public/shop.js public/admin.html; do
+    mkdir -p "$TMPDIR_DL/$(dirname "$f")"
+    curl -fsSL -o "$TMPDIR_DL/$f" "$GITHUB_RAW/$f" || err "Download fehlgeschlagen: $GITHUB_RAW/$f"
   done
+  LOCAL_SRC="$TMPDIR_DL"
 fi
+
+info "Kopiere shop-kern in Container ..."
+pct exec "$CTID" -- mkdir -p /opt/wawi
+for f in server.js public/index.html public/style.css public/shop.js public/admin.html; do
+  [ -f "$LOCAL_SRC/$f" ] && pct push "$CTID" "$LOCAL_SRC/$f" "/opt/wawi/$f"
+done
 
 # OpenRC-Service für Autostart
 info "Konfiguriere OpenRC-Autostart ..."
