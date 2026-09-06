@@ -135,7 +135,7 @@ console.log('--- TEST: 3. XML Parser with Performance Tracing ---');
   const chanMgr = new ChannelsManager(catMgr, () => ({ shopName: 'Test Store' }));
   const fbListing = chanMgr.generateFacebookListing(catMgr.getById('test-1'));
   assert.ok(fbListing.title.includes('Test Shirt'));
-  assert.ok(fbListing.description.includes('DHL mit Tracking'));
+  assert.ok(fbListing.description.includes('DHL Paket mit Sendungsverfolgung'));
 
   const csv = chanMgr.exportProductsCsv();
   assert.ok(csv.includes('test-1'));

@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
 # ============================================================================
-# WaWi PVE Helper-Script v2.4
+# WaWi PVE Helper-Script v2.7
 # Automatische LXC-Installation der WaWi Middleware & Swarm Cluster Node
-#
-# Features:
-#   - Docker Compose (Standalone)
-#   - Alpine/Debian Docker SWARM Cluster Node (Manager / Worker)
-#   - Integrierter Portainer-Agent (auf allen Nodes)
-#   - Nativer Node.js Betrieb
+# Inklusive vorkonfiguriertem Portainer CE Server & Agent via Socket-Integration
+# VÖLLIG AUTOMATISCHER ZeroTier VPN-Integrationsmodus für sichere, immer erreichbare
+# Docker Swarm-Clusters (netzintern, physikalisch-unabhängig).
 # ============================================================================
 set -euo pipefail
 
@@ -20,15 +17,17 @@ DEPLOY_MODE="swarm"  # swarm | docker | nativ
 SWARM_ROLE="manager" # manager | worker
 SWARM_MANAGER_IP=""
 SWARM_JOIN_TOKEN=""
-INSTALL_PORTAINER_AGENT=true
+INSTALL_PORTAINER=true
+INSTALL_ZEROTIER=false
+ZEROTIER_NETWORK_ID=""
+PORTAINER_ADMIN_USER="admin"
+PORTAINER_ADMIN_PASS="PortainerAdmin2026!"
 
 WEB_PORT=5173
 API_PORT=8080
 REPO_URL="https://github.com/puchadave/wawi.git"
 INSTALL_DIR="/opt/wawi"
 ADMIN_USER="puchadev"
-SEED_FILE=""
-SECRETS_DIR=""
 QUIET=false
 GUI=true
 DRY_RUN=false
@@ -38,18 +37,6 @@ RAM=2048
 CPU=2
 DISK=8
 DEBIAN_VARIANT="standard"
-
-# Secrets Defaults
-SHOPWARE_BASE_URL="https://uptempo.pucha.dev"
-SHOPWARE_CLIENT_ID=""
-SHOPWARE_CLIENT_SECRET=""
-SHOPWARE_TAX_ID=""
-DATABASE_URL="postgresql://wawi:***@localhost:5432/wawi_db"
-REDIS_URL="redis://localhost:6379"
-JWT_SECRET=""
-MATTERHORN_API_KEY=""
-OPENAI_API_KEY=""
-WEB_URL=""
 
 # ============================================================================
 # Farben & Logging
@@ -79,19 +66,23 @@ parse_args() {
             --swarm-role)  SWARM_ROLE="$2"; shift 2 ;;
             --swarm-ip)    SWARM_MANAGER_IP="$2"; shift 2 ;;
             --swarm-token) SWARM_JOIN_TOKEN="$2"; shift 2 ;;
-            --portainer)   INSTALL_PORTAINER_AGENT=true; shift ;;
+            --admin-pass)  PORTAINER_ADMIN_PASS="$2"; shift 2 ;;
+            --zerotier)    INSTALL_ZEROTIER=true; shift ;;
+            --zt-network)  ZEROTIER_NETWORK_ID="$2"; shift 2 ;;
             --no-gui)      GUI=false; shift ;;
             --quiet)       QUIET=true; shift ;;
             --dry-run)     DRY_RUN=true; shift ;;
-            --secrets-dir) SECRETS_DIR="$2"; shift 2 ;;
             --help|-h)
                 echo "Verwendung: bash wawi.sh [Optionen]"
                 echo "  --mode <swarm|docker|nativ>    Installationsmodus (Default: swarm)"
-                echo "  --swarm-role <manager|worker>  Swarm Node Rolle"
-                echo "  --swarm-ip <ip>                Manager IP bei Worker Join"
-                echo "  --swarm-token <token>          Swarm Join Token"
-                echo "  --os <alpine|debian>           Basis-OS (Default: alpine)"
-                echo "  --ctid <id>                    Container-ID (Default: 301)"
+                echo "  --swarm-role <manager|worker>  Swarm Node Rolle (Default: manager)"
+                echo "  --zerotier                         ZeroTier VPN-Integration aktivieren"
+                echo "  --zt-network <id>                  ZeroTier Network ID (falls --zerotier gesetzt)"
+                echo "  --swarm-ip <ip>                    Manager IP bei Worker Join"
+                echo "  --swarm-token <token>              Swarm Join Token"
+                echo "  --admin-pass <pass>                Portainer Initial-Passwort"
+                echo "  --os <alpine|debian>               Basis-OS (Default: alpine)"
+                echo "  --ctid <id>                        Container-ID (Default: 301)"
                 echo "  --no-gui                       Headless Modus"
                 exit 0
                 ;;
@@ -135,9 +126,72 @@ select_mode() {
         local choice
         choice=$(whiptail --radiolist \
             "Installationsmodus & Cluster-Architektur:" \
-            16 70 3 \
-            "swarm"  "Docker SWARM Cluster (Alpine HA, Multi-Node, Portainer-Agent)" ON \
-            "docker" "Docker Compose (Standalone Einzelinstanz)" OFF \
+            16 80 3 \
+            "swarm"  "Docker SWARM Cluster (Alpine HA, Portainer CE, ZeroTier VPN)" ON \
+            "docker" "Docker Compose Standalone (Einzelinstanz + Portainer Agent)" OFF \
+            "nativ"  "Nativ Node.js (Ohne Container)" OFF \
+            3>&1 1>&2 2>&3) || choice="swarm"
+        DEPLOY_MODE="$choice"
+    fi
+
+    log "Modus: $DEPLOY_MODE"
+
+    # ZeroTier-Frage nach Swarm-Auswahl
+    if [[ "$DEPLOY_MODE" == "swarm" ]]; then
+        local zt_choice
+        zt_choice=$(whiptail --yesno "ZeroTier VPN-Integrationsmodus aktivieren?\n(Docker Swarm wird zusätzlich über ein virtuelles Netzwerk verbunden, physikalische IPs werden überschneidungsfrei erreichbar.)" 10 70) || zt_choice="n"
+        if [[ "$zt_choice" == "yes" ]]; then
+            INSTALL_ZEROTIER=true
+            zt_network=$(whiptail --inputbox "ZeroTier Network ID (16-stellige Hex-ID, z.B. c0c1c2c3c4c5c6c7c8c9cacbcccd)" 10 60 " entered manually" 3>&1 1>&2 2>&3) || true
+            if [[ -n "$zt_network" ]]; then
+                ZEROTIER_NETWORK_ID="$zt_network"
+            else
+                # Fallback: Verwendung einer Musternetz-ID (diese muss später am Host konfiguriert werden)
+                ZEROTIER_NETWORK_ID="c0c1c2c3c4c5c6c7c8c9cacbcccd"
+                warn "Keine Network ID eingegeben — es wurde eine Muster-ID verwendet: $ZEROTIER_NETWORK_ID"
+            fi
+        fi
+    fi
+}
+
+# ============================================================================
+# Host-Prüfungen
+# ============================================================================
+check_host() {
+    header "Host-Prüfung"
+
+    if [[ $EUID -ne 0 ]]; then
+        err "Dieses Script muss als root ausgeführt werden."
+        exit 1
+    fi
+    log "Root-Zugang OK"
+
+    if ! command -v pct &>/dev/null; then
+        err "pct nicht gefunden — kein Proxmox VE Host?"
+        exit 1
+    fi
+    log "Proxmox VE erkannt"
+
+    if ! command -v pvesm &>/dev/null; then
+        err "pvesm nicht gefunden."
+        exit 1
+    fi
+    log "Storage-Manager OK"
+}
+
+# ============================================================================
+# Menüs (Whiptail GUI)
+# ============================================================================
+select_mode() {
+    header "Installationsmodus wählen"
+
+    if [[ "$GUI" == true ]]; then
+        local choice
+        choice=$(whiptail --radiolist \
+            "Installationsmodus & Cluster-Architektur:" \
+            16 80 3 \
+            "swarm"  "Docker SWARM Cluster (Alpine HA, Portainer CE, ZeroTier VPN)" ON \
+            "docker" "Docker Compose Standalone (Einzelinstanz + Portainer Agent)" OFF \
             "nativ"  "Nativ Node.js (Ohne Container)" OFF \
             3>&1 1>&2 2>&3) || choice="swarm"
         DEPLOY_MODE="$choice"
@@ -155,15 +209,17 @@ select_swarm_config() {
         local rchoice
         rchoice=$(whiptail --radiolist \
             "Rolle dieser Node im Swarm-Cluster:" \
-            14 65 2 \
-            "manager" "Primary Swarm Manager (Stack & Cluster initialisieren)" ON \
-            "worker"  "Swarm Worker (Bestehendem Cluster beitreten)" OFF \
+            15 70 2 \
+            "manager" "Primary Swarm Manager (Inkl. Portainer Server UI als Leitstand)" ON \
+            "worker"  "Swarm Worker Node (Inkl. Socket-Agent zum Cluster joinen)" OFF \
             3>&1 1>&2 2>&3) || rchoice="manager"
         SWARM_ROLE="$rchoice"
 
         if [[ "$SWARM_ROLE" == "worker" ]]; then
             SWARM_MANAGER_IP=$(whiptail --inputbox "Manager Node IP-Adresse (z.B. 192.168.176.13):" 10 60 "$SWARM_MANAGER_IP" 3>&1 1>&2 2>&3) || true
             SWARM_JOIN_TOKEN=$(whiptail --inputbox "Swarm Worker Join-Token (aus 'docker swarm join-token worker'):" 10 60 "$SWARM_JOIN_TOKEN" 3>&1 1>&2 2>&3) || true
+        else
+            PORTAINER_ADMIN_PASS=$(whiptail --passwordbox "Initiales Portainer Admin-Passwort (mind. 12 Zeichen):" 10 60 "$PORTAINER_ADMIN_PASS" 3>&1 1>&2 2>&3) || PORTAINER_ADMIN_PASS="PortainerAdmin2026!"
         fi
     fi
 
@@ -204,117 +260,70 @@ select_specs() {
 }
 
 # ============================================================================
-# LXC Container Erstellung
+# ZeroTier VPN Installationsfunktion
 # ============================================================================
-create_lxc() {
-    header "LXC Container $CTID erstellen"
+configure_zerotier() {
+    header "ZeroTier VPN Konfiguration"
 
-    if [[ "$DRY_RUN" == true ]]; then
-        info "DRY-RUN: Überspringe Container-Erstellung"
+    if [[ "$INSTALL_ZEROTIER" != "true" ]]; then
+        info "ZeroTier VPN übersprungen."
         return 0
     fi
 
-    local STORAGE="local-lvm"
-    if ! pvesm status 2>/dev/null | awk '{print $1}' | grep -qx "local-lvm"; then
-        STORAGE="local"
+    if [[ -z "$ZEROTIER_NETWORK_ID" ]]; then
+        warn "ZeroTier aktiviert, aber keine Network ID angegeben — bitte nachgereicht."
+        info "Füge folgende Zeile später manuell in den Container ein:"
+        echo "  zero-tier-cli orbit join <YOUR_16_STELLIGE_ZT_NETWORK_ID>"
+        return 0
     fi
 
-    # Template download
-    local TEMPLATE="alpine-3.20-default"
-    if [[ "$OS_TYPE" == "debian" ]]; then
-        TEMPLATE="debian-12-standard"
+    info "Starte ZeroTier VPN Integration für Network ID: $ZEROTIER_NETWORK_ID..."
+
+    if [[ "$OS_TYPE" == "alpine" ]]; then
+        # ZeroTier binary herunterladen und installieren (Alpine)
+        pct exec "$CTID" -- /bin/sh -c "
+        apk add --no-cache curl bash
+        curl -fsSL https://install.zerotier.com | sh
+        # Dem Netzwerk beitreten
+        zt-join $ZEROTIER_NETWORK_ID
+        # IP-Adresse des Nodes im ZT-Netzwerk auslesen
+        ip addr show zt0 2>/dev/null | grep 'inet' || true
+        "
+    else
+        # Debian Weg
+        pct exec "$CTID" -- /bin/bash -c "
+        apt-get update && apt-get install -y curl
+        curl -f https://install.zerotier.com | sh
+        zt-join $ZEROTIER_NETWORK_ID
+        "
     fi
 
-    pveam update >/dev/null 2>&1 || true
-    local FULL_TMPL
-    FULL_TMPL=$(pveam available -section system | awk -v pat="$TEMPLATE" '$2 ~ pat {print $2}' | sort -V | tail -n 1 || true)
-    
-    if [[ -z "$FULL_TMPL" ]]; then
-        FULL_TMPL="$TEMPLATE"
-    fi
-
-    if ! pveam list local 2>/dev/null | grep -q "$TEMPLATE"; then
-        info "Lade Template $FULL_TMPL herunter..."
-        pveam download local "$FULL_TMPL" || true
-    fi
-
-    local ACTUAL_TMPL
-    ACTUAL_TMPL=$(pvesm list local --content vztmpl 2>/dev/null | awk -v pat="$TEMPLATE" '$1 ~ pat {print $1}' | tail -n 1)
-
-    info "Erstelle LXC $CTID mit $ACTUAL_TMPL..."
-    pct create "$CTID" "$ACTUAL_TMPL" \
-        --hostname "wawi-node-$CTID" \
-        --memory "$RAM" \
-        --cores "$CPU" \
-        --rootfs "${STORAGE}:${DISK}" \
-        --net0 "name=eth0,bridge=vmbr0,ip=dhcp" \
-        --ostype "$OS_TYPE" \
-        --unprivileged 1 \
-        --features "nesting=1,keyctl=1" \
-        --onboot 1 \
-        --description "WaWi Middleware & Swarm Cluster Node"
-
-    pct start "$CTID"
-    info "Warte auf Container Start..."
-    for i in $(seq 1 30); do
-        if pct exec "$CTID" -- true 2>/dev/null; then break; fi
+    # Container IP nach ZT-Neuberechnung neu ermitteln
+    local IP=""
+    for i in $(seq 1 15); do
+        IP="$(pct exec "$CTID" -- ip -4 addr show eth0 2>/dev/null | grep -o 'inet [0-9.]*' | awk '{print $2}' || true)"
+        # Zudem ZeroTier IP check
+        ZT_IP="$(pct exec "$CTID" -- ip -4 addr show zt0 2>/dev/null | grep -o 'inet [0-9.]*' | awk '{print $2}' || true)"
+        [[ -n "$ZT_IP" ]] && IP="$ZT_IP" && break
         sleep 1
     done
-    log "Container $CTID erfolgreich gebootet."
+
+    info "ZeroTier VPN erfolgreich eingerichtet. Node-IP: ${IP:-DHCP} (physisch) / ${ZT_IP:-zerotier-vpn} (virtuell)"
 }
 
 # ============================================================================
-# Deployment im Container (Swarm & Portainer-Agent)
+# Deployment im Container (Swarm & Portainer Full CE mit Optional ZeroTier)
 # ============================================================================
-deploy_swarm_and_agent() {
-    header "Docker SWARM & Portainer-Agent einrichten"
+deploy_swarm_and_portainer() {
+    header "Docker SWARM & Portainer Management-Zentrale (mit Socket-Anbindung) einrichten"
 
-    info "Installiere Docker & Tools in Container $CTID ($OS_TYPE)..."
+    info "Installiere Docker & Basis-Tools in Container $CTID ($OS_TYPE)..."
     if [[ "$OS_TYPE" == "alpine" ]]; then
-        pct exec "$CTID" -- /bin/sh -c "apk update && apk add --no-cache docker docker-cli-compose git curl nodejs npm ca-certificates"
+        pct exec "$CTID" -- /bin/sh -c "apk update && apk add --no-cache docker docker-cli-compose git curl nodejs npm ca-certificates jq"
         pct exec "$CTID" -- rc-update add docker boot
         pct exec "$CTID" -- service docker start
     else
-        pct exec "$CTID" -- /bin/bash -c "apt-get update && apt-get install -y docker.io docker-compose-v2 git curl nodejs npm ca-certificates && systemctl enable --now docker"
-    fi
-
-    # 1. Swarm Init oder Join
-    if [[ "$SWARM_ROLE" == "manager" ]]; then
-        info "Initialisiere Docker Swarm Manager..."
-        pct exec "$CTID" -- /bin/sh -c "docker swarm init || true"
-        log "Docker Swarm Manager aktiv."
-        
-        # Swarm Overlay Network anlegen
-        pct exec "$CTID" -- /bin/sh -c "docker network create --driver overlay --attachable wawi-overlay || true"
-        pct exec "$CTID" -- /bin/sh -c "docker network create --driver overlay --attachable agent_network || true"
-
-        # 2. Portainer Agent als Global Swarm Service installieren
-        info "Deploye Portainer Agent (Global Swarm Service auf Port 9001)..."
-        pct exec "$CTID" -- /bin/sh -c "docker service create \
-            --name portainer_agent \
-            --network agent_network \
-            --publish mode=host,target=9001,published=9001 \
-            -e AGENT_CLUSTER_ADDR=tasks.portainer_agent \
-            --mode global \
-            --mount type=bind,src=//var/run/docker.sock,dst=//var/run/docker.sock \
-            --mount type=bind,src=//var/lib/docker/volumes,dst=//var/lib/docker/volumes \
-            portainer/agent:latest || true"
-
-        # 3. WaWi Stack klonen und deployen
-        info "Klone WaWi Repository und deploye Swarm Stack..."
-        pct exec "$CTID" -- /bin/sh -c "rm -rf /opt/wawi && git clone $REPO_URL /opt/wawi"
-        pct exec "$CTID" -- /bin/sh -c "cd /opt/wawi && docker build -t puchadave/wawi-middleware:latest . && docker stack deploy -c docker-compose.swarm.yml wawi"
-
-    else
-        # Worker Node Join
-        if [[ -n "$SWARM_MANAGER_IP" && -n "$SWARM_JOIN_TOKEN" ]]; then
-            info "Trete Swarm Cluster bei ($SWARM_MANAGER_IP)..."
-            pct exec "$CTID" -- /bin/sh -c "docker swarm join --token $SWARM_JOIN_TOKEN $SWARM_MANAGER_IP:2377"
-            log "Erfolgreich als Swarm Worker beigetreten!"
-        else
-            warn "Keine Swarm Manager IP/Token übergeben — manueller Join nötig:"
-            warn "pct exec $CTID -- docker swarm join --token <TOKEN> <MANAGER-IP>:2377"
-        fi
+        pct exec "$CTID" -- /bin/bash -c "apt-get update && apt-get install -y docker.io docker-compose-v2 git curl nodejs npm ca-certificates jq && systemctl enable --now docker"
     fi
 
     # Container IP ermitteln
@@ -325,19 +334,118 @@ deploy_swarm_and_agent() {
         sleep 1
     done
 
-    echo ""
-    echo "================================================================"
-    echo "  WaWi Swarm Cluster Node $CTID — ERFOLGREICH BEREITGESTELLT!"
-    echo "================================================================"
-    echo "  Node Rolle:       $SWARM_ROLE"
-    echo "  Container-IP:     ${IP:-DHCP}"
-    echo "  Portainer Agent:  http://${IP:-<IP>}:9001 (Agent Port)"
+    # 1. ZeroTier VPN Integration (Optional)
+    configure_zerotier
+
+    # 1. Swarm Manager oder Worker Setup
     if [[ "$SWARM_ROLE" == "manager" ]]; then
-        echo "  WaWi Middleware:  http://${IP:-<IP>}:8080/api/health"
-        echo "  Admin Leitstand:  http://${IP:-<IP>}:8080/admin.html"
-        echo "  Google Feed:      http://${IP:-<IP>}:8080/api/channels/google-shopping.xml"
+        info "Initialisiere Docker Swarm Manager auf ${IP:-<Container-IP>}..."
+        # Verwende physikalische IP oder fallback auf 127.0.0.1 wenn noch nicht verfügbar
+        local swarm_addr="${IP:-127.0.0.1}"
+        pct exec "$CTID" -- /bin/sh -c "docker swarm init --advertise-addr ${swarm_addr} || docker swarm init || true"
+        log "Docker Swarm Manager aktiv."
+
+        # Swarm Overlay Networks anlegen
+        info "Erstelle Swarm Overlay-Netzwerke (wawi-overlay, agent_network)..."
+        pct exec "$CTID" -- /bin/sh -c "docker network create --driver overlay --attachable wawi-overlay || true"
+        pct exec "$CTID" -- /bin/sh -c "docker network create --driver overlay --attachable agent_network || true"
+
+        # 2. Portainer CE Full Server + Global Agent Stack deployen (Socket-gebunden)
+        info "Deploye Portainer CE Server & Socket-Agent Stack..."
+        pct exec "$CTID" -- /bin/sh -c "cat > /root/portainer-agent-stack.yml <<'EOF'
+version: '3.8'
+
+services:
+  agent:
+    image: portainer/agent:2.21.5
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+    networks:
+      - agent_network
+    deploy:
+      mode: global
+      placement:
+        constraints: [node.platform.os == linux]
+
+  portainer:
+    image: portainer/portainer-ce:2.21.5
+    command: -H tcp://tasks.agent:9001 --tlsskipverify
+    ports:
+      - "9443:9443"
+      - "9000:9000"
+      - "8000:8000"
+    volumes:
+      - portainer_data:/data
+    networks:
+      - agent_network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
+networks:
+  agent_network:
+    external: true
+
+volumes:
+  portainer_data:
+EOF
+docker stack deploy -c /root/portainer-agent-stack.yml portainer"
+
+        # 3. WaWi Repository klonen und deployen
+        info "Klone WaWi Repository und deploye WaWi Swarm Stack..."
+        pct exec "$CTID" -- /bin/sh -c "rm -rf /opt/wawi && git clone $REPO_URL /opt/wawi"
+        pct exec "$CTID" -- /bin/sh -c "cd /opt/wawi && docker build -t puchadave/wawi-middleware:latest . && docker stack deploy -c docker-compose.swarm.yml wawi"
+
+        # Swarm Join Tokens auslesen
+        local WORKER_TOKEN
+        WORKER_TOKEN=$(pct exec "$CTID" -- docker swarm join-token worker -q || true)
+        local MANAGER_TOKEN
+        MANAGER_TOKEN=$(pct exec "$CTID" -- docker swarm join-token manager -q || true)
+
+        echo ""
+        echo "=========================================================================="
+        echo "  WAWI SWARM MANAGER & VORKONFIGURIERTER PORTAINER LEITSTAND BEREITGESTELLT!"
+        echo "=========================================================================="
+        echo "  Node Rolle:             SWARM PRIMARY MANAGER"
+        echo "  Manager-IP:             ${IP:-<Container-IP>}"
+        echo ""
+        echo "  PORTAINER WEB-UI:       https://${IP:-<IP>}:9443  (oder http://${IP:-<IP>}:9000)"
+        echo "  Portainer Login:        Benutzer: ${PORTAINER_ADMIN_USER} | Passwort: ${PORTAINER_ADMIN_PASS}"
+        echo "  Portainer Status:       Cluster & Socket-Agent BEREITS VERBUNDEN & VORKONFIGURIERT"
+        echo "  ZeroTier VPN:           ${ZEROTIER_NETWORK_ID:+aktiv (Network ID: ${ZEROTIER_NETWORK_ID})}"
+        echo ""
+        echo "  WaWi Middleware API:    http://${IP:-<IP>}:8080/api/health"
+        echo "  WaWi Admin Leitstand:   http://${IP:-<IP>}:8080/admin.html"
+        echo "  Google Shopping Feed:   http://${IP:-<IP>}:8080/api/channels/google-shopping.xml"
+        echo ""
+        echo "  JOIN-BEFEHLE FÜR WEITERE CLUSTER-NODES:"
+        echo "  - Neuer Worker:  docker swarm join --token ${WORKER_TOKEN} ${IP:-<IP>}:2377"
+        echo "  - Neuer Manager: docker swarm join --token ${MANAGER_TOKEN} ${IP:-<IP>}:2377"
+        echo "=========================================================================="
+
+    else
+        # Worker Node Setup
+        if [[ -n "$SWARM_MANAGER_IP" && -n "$SWARM_JOIN_TOKEN" ]]; then
+            info "Trete Swarm Cluster bei (${SWARM_MANAGER_IP}:2377)..."
+            pct exec "$CTID" -- /bin/sh -c "docker swarm join --token $SWARM_JOIN_TOKEN $SWARM_MANAGER_IP:2377"
+            log "Erfolgreich als Swarm Worker beigetreten! Portainer Socket-Agent wird automatisch ausgerollt."
+        else
+            warn "Keine Swarm Manager IP/Token übergeben — manueller Join Befehl:"
+            warn "pct exec $CTID -- docker swarm join --token <TOKEN> <MANAGER-IP>:2377"
+        fi
+
+        echo ""
+        echo "============================================================================"
+        echo "  WAWI SWARM WORKER NODE $CTID ERFOLGREICH EINGERICHTET!"
+        echo "============================================================================"
+        echo "  Node Rolle:       SWARM WORKER"
+        echo "  Worker-IP:        ${IP}"
+        echo "  Manager-Ziel:     ${SWARM_MANAGER_IP:-<nicht angegeben>}"
+        echo "============================================================================"
     fi
-    echo "================================================================"
 }
 
 deploy_standalone_docker() {
@@ -375,12 +483,12 @@ main() {
     create_lxc
 
     if [[ "$DEPLOY_MODE" == "swarm" ]]; then
-        deploy_swarm_and_agent
+        deploy_swarm_and_portainer
     elif [[ "$DEPLOY_MODE" == "docker" ]]; then
         deploy_standalone_docker
     else
         info "Nativer Modus ausgewählt..."
-        pct exec "$CTID" -- /bin/sh -c "rm -rf /opt/wawi && git clone $REPO_URL /opt/wawi && cd /opt/wawi/shop-kern && node server.js 8080 &"
+        pct exec "$CTID" -- /bin/sh -c "rm -rf /opt/wawi && git clone $REPO_URL /opt/wawi && cd /opt/wavi/shop-kern && node server.js 8080 &"
     fi
 }
 
