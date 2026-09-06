@@ -20,6 +20,7 @@ const { parseMatterhornXml } = require('./modules/xmlparser');
 const { CatalogManager } = require('./modules/catalog');
 const { OrderManager } = require('./modules/orders');
 const { ChannelsManager } = require('./modules/channels');
+const { MarketplaceRegistry } = require('./modules/marketplace/registry');
 
 const PORT = parseInt(process.argv[2] || process.env.PORT || '8080', 10);
 const ROOT = __dirname;
@@ -102,6 +103,12 @@ function ensureData() {
         kleinanzeigen: { fixedFee: 0.00, percentageFee: 0.05 },
         kaufland: { fixedFee: 0.00, percentageFee: 0.08 },
         otto: { fixedFee: 0.00, percentageFee: 0.15 }
+      },
+      marketplace: {
+        kaufland: { enabled: false, mode: "dryRun", apiKey: "", secret: "", clientKey: "", baseUrl: "https://sellerapi.kaufland.com/v2" },
+        otto: { enabled: false, mode: "dryRun", clientId: "", clientSecret: "", baseUrl: "https://api.otto.market/v1", tokenUrl: "https://api.otto.market/v1/token" },
+        ebay: { enabled: false, mode: "dryRun", clientId: "", clientSecret: "", refreshToken: "", baseUrl: "https://api.ebay.com" },
+        kleinanzeigen: { enabled: false, mode: "dryRun", bridgeUrl: "" }
       },
     }, null, 2));
   }
@@ -231,6 +238,7 @@ function backupNow(reason = 'manual') {
 const catalogMgr = new CatalogManager(PRODUCTS_FILE, CONFIG_FILE);
 const orderMgr = new OrderManager(ORDERS_FILE, catalogMgr);
 const channelsMgr = new ChannelsManager(catalogMgr, readConfig);
+const marketplaceRegistry = new MarketplaceRegistry(catalogMgr, readConfig, orderMgr);
 
 /* ---------- Session & Auth ---------- */
 
@@ -688,6 +696,78 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, channel, count: items.length, items });
       }
 
+      // Marketplace API (Kaufland/Otto/eBay/Kleinanzeigen) — DryRun default, echte Calls nur mit enabled:true
+      if (p === '/api/admin/marketplace/status' && req.method === 'GET') {
+        const status = await marketplaceRegistry.getStatus();
+        return sendJson(res, 200, { ok: true, status });
+      }
+      if (p.startsWith('/api/admin/marketplace/') && p.endsWith('/health') && req.method === 'GET') {
+        const channel = p.split('/')[4];
+        try {
+          const ad = marketplaceRegistry.getAdapter(channel);
+          const h = await ad.healthCheck();
+          return sendJson(res, 200, { ok: true, channel, health: h });
+        } catch (e) { return sendJson(res, 400, { ok: false, error: e.message }); }
+      }
+      if (p.startsWith('/api/admin/marketplace/') && p.endsWith('/push') && req.method === 'POST') {
+        const channel = p.split('/')[4];
+        const body = await readBody(req);
+        const ids = body.ids ? body.ids : (body.id ? [body.id] : []);
+        if (!ids.length) return sendJson(res, 400, { ok: false, error: 'id oder ids[] erforderlich' });
+        try {
+          const r = await marketplaceRegistry.pushProducts(channel, ids.map(String));
+          return sendJson(res, 200, { ok: true, channel, ...r });
+        } catch (e) { return sendJson(res, 400, { ok: false, error: e.message }); }
+      }
+      if (p.startsWith('/api/admin/marketplace/') && p.endsWith('/sync-stock') && req.method === 'POST') {
+        const channel = p.split('/')[4];
+        const body = await readBody(req);
+        const ids = body.ids ? body.ids : (body.id ? [body.id] : []);
+        if (!ids.length) return sendJson(res, 400, { ok: false, error: 'id oder ids[] erforderlich' });
+        const ad = marketplaceRegistry.getAdapter(channel);
+        const results = [];
+        for (const id of ids) {
+          try { const r = await ad.pushStock(String(id)); results.push({ id, ok: true, ...r }); } catch (e) { results.push({ id, ok: false, error: e.message }); }
+        }
+        return sendJson(res, 200, { ok: true, channel, results });
+      }
+      if (p.startsWith('/api/admin/marketplace/') && p.endsWith('/sync-price') && req.method === 'POST') {
+        const channel = p.split('/')[4];
+        const body = await readBody(req);
+        const ids = body.ids ? body.ids : (body.id ? [body.id] : []);
+        if (!ids.length) return sendJson(res, 400, { ok: false, error: 'id oder ids[] erforderlich' });
+        const ad = marketplaceRegistry.getAdapter(channel);
+        const results = [];
+        for (const id of ids) {
+          try { const r = await ad.pushPrice(String(id)); results.push({ id, ok: true, ...r }); } catch (e) { results.push({ id, ok: false, error: e.message }); }
+        }
+        return sendJson(res, 200, { ok: true, channel, results });
+      }
+      if (p.startsWith('/api/admin/marketplace/') && p.endsWith('/import-orders') && req.method === 'POST') {
+        const channel = p.split('/')[4];
+        const body = await readBody(req);
+        try {
+          const r = await marketplaceRegistry.importOrders(channel, body.since || null);
+          return sendJson(res, 200, { ok: true, channel, ...r });
+        } catch (e) { return sendJson(res, 400, { ok: false, error: e.message }); }
+      }
+      if (p.startsWith('/api/admin/marketplace/') && p.endsWith('/tracking') && req.method === 'POST') {
+        const channel = p.split('/')[4];
+        const body = await readBody(req);
+        if (!body.orderId || !body.trackingNumber) return sendJson(res, 400, { ok: false, error: 'orderId + trackingNumber erforderlich' });
+        try {
+          const r = await marketplaceRegistry.pushTracking(channel, String(body.orderId), { trackingNumber: String(body.trackingNumber), carrier: String(body.carrier || 'DHL') });
+          return sendJson(res, 200, { ok: true, channel, ...r });
+        } catch (e) { return sendJson(res, 400, { ok: false, error: e.message }); }
+      }
+      if (p === '/api/admin/marketplace/sync-all' && req.method === 'POST') {
+        const body = await readBody(req);
+        const channels = Array.isArray(body.channels) && body.channels.length ? body.channels : ['kaufland','otto','ebay','kleinanzeigen'];
+        const productIds = Array.isArray(body.productIds) ? body.productIds.map(String) : null;
+        const r = await marketplaceRegistry.syncAll(channels, { productIds, importOrders: Boolean(body.importOrders), since: body.since || null, limit: Number(body.limit || 20) });
+        return sendJson(res, 200, { ok: true, result: r });
+      }
+
       // Config
       if (p === '/api/admin/config' && req.method === 'GET') {
         return sendJson(res, 200, readConfig());
@@ -716,6 +796,14 @@ const server = http.createServer(async (req, res) => {
         }
         if (body.marketplaceFees && typeof body.marketplaceFees === 'object') {
           cfg.marketplaceFees = { ...cfg.marketplaceFees, ...body.marketplaceFees };
+        }
+        if (body.marketplace && typeof body.marketplace === 'object') {
+          cfg.marketplace = cfg.marketplace || {};
+          for (const ch of ['kaufland','otto','ebay','kleinanzeigen']) {
+            if (body.marketplace[ch] && typeof body.marketplace[ch] === 'object') {
+              cfg.marketplace[ch] = { ...(cfg.marketplace[ch] || {}), ...body.marketplace[ch] };
+            }
+          }
         }
 
         writeJsonAtomic(CONFIG_FILE, cfg);
