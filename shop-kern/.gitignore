@@ -1,0 +1,6 @@
+# WaWi Shop-Kern — Laufzeitdaten NICHT ins Repo
+shop-kern/data/*.json
+shop-kern/data/admin.key
+shop-kern/data/admin-passwort.txt
+shop-kern/data/*.tmp
+!shop-kern/data/README.md
