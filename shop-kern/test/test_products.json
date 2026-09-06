@@ -1,0 +1,27 @@
+{
+  "products": [
+    {
+      "id": "test-1",
+      "sku": "SKU-MTP68ABT",
+      "name": "Test Shirt",
+      "brand": "",
+      "category": "Allgemein",
+      "categoryPath": "/",
+      "price": 24.9,
+      "supplierEkNet": 10,
+      "sizes": [
+        "Standard"
+      ],
+      "variants": [],
+      "stock": 18,
+      "description": "",
+      "image": "",
+      "images": [],
+      "active": true,
+      "isWhitelisted": true,
+      "status": "approved",
+      "created": "2026-09-06T02:06:56.585Z",
+      "updatedAt": "2026-09-06T02:06:56.587Z"
+    }
+  ]
+}

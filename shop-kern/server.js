@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * WaWi Shop-Kern v2.2 — Selbstheilendes, kontinuierlich getracetes Produktionssystem
+ * WaWi Shop-Kern v2.3 — Vollständiges Multi-Channel & Produktionssystem
  * 100% Node.js-Stdlib, KEINE externen Pakete, KEIN Docker, KEINE Build-Stufe.
  *
  * Eingebautes kontinuierliches Debugging, Telemetrie, Request-Tracing & Audit-Logging.
@@ -42,6 +42,7 @@ const MIME = {
   '.jpg': 'image/jpeg',
   '.svg': 'image/svg+xml',
   '.webp': 'image/webp',
+  '.xml': 'application/xml; charset=utf-8',
 };
 
 /* ---------- Globale Fehlertoleranz ---------- */
@@ -304,7 +305,6 @@ const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://localhost');
   const p = u.pathname;
 
-  // Intercept response finish for live tracing
   res.on('finish', () => {
     const reqEnd = process.hrtime.bigint();
     const durationMs = (Number(reqEnd - reqStart) / 1_000_000).toFixed(2);
@@ -321,7 +321,15 @@ const server = http.createServer(async (req, res) => {
       return servePublic(res, p);
     }
 
-    // 2. Health & System-Metriken
+    // 2. Öffentliche Feeds für Google Shopping, Meta Catalog & Instagram Shop
+    if (p === '/api/channels/google-shopping.xml' && req.method === 'GET') {
+      const origin = `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers.host || 'localhost:' + PORT}`;
+      const xml = channelsMgr.generateGoogleShoppingXml(origin);
+      res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8' });
+      return res.end(xml);
+    }
+
+    // 3. Health & System-Metriken
     if (p === '/api/health' && req.method === 'GET') {
       const metrics = logger.getSystemMetrics();
       const prods = catalogMgr.loadProducts();
@@ -339,13 +347,13 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // 3. Öffentliche Produktliste (Shop)
+    // 4. Öffentliche Produktliste (Shop)
     if (p === '/api/products' && req.method === 'GET') {
       const active = catalogMgr.getAll({ activeOnly: true });
       return sendJson(res, 200, { products: active });
     }
 
-    // 4. Öffentliche Konfiguration
+    // 5. Öffentliche Konfiguration
     if (p === '/api/config' && req.method === 'GET') {
       const cfg = readConfig();
       return sendJson(res, 200, {
@@ -358,7 +366,7 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // 5. Öffentliche Bestellung
+    // 6. Öffentliche Bestellung
     if (p === '/api/orders' && req.method === 'POST') {
       const body = await readBody(req);
       const { items, customer, paymentMethod } = body;
@@ -426,7 +434,10 @@ const server = http.createServer(async (req, res) => {
           reference: 'Bestellung ' + order.id,
           note: cfg.bankNote,
         };
+        payment.giroCodePayload = channelsMgr.generateGiroCodeString(order);
       }
+
+      const waOrderText = channelsMgr.generateWhatsAppOrderText(order);
 
       return sendJson(res, 201, {
         ok: true,
@@ -434,10 +445,11 @@ const server = http.createServer(async (req, res) => {
         total,
         payment,
         whatsappNumber: cfg.whatsappNumber || '',
+        whatsappMessageText: waOrderText,
       });
     }
 
-    // 6. Admin Login
+    // 7. Admin Login
     if (p === '/api/admin/login' && req.method === 'POST') {
       const body = await readBody(req);
       const storedHash = fs.readFileSync(ADMIN_KEY_FILE, 'utf8').trim();
@@ -458,7 +470,7 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 401, { ok: false, error: 'Nicht autorisiert' });
       }
 
-      // Kontinuierliches Debugging & Telemetrie
+      // Live-Debugging
       if (p === '/api/admin/debug/logs' && req.method === 'GET') {
         const limit = parseInt(u.searchParams.get('limit') || '100', 10);
         const level = u.searchParams.get('level') || null;
@@ -594,13 +606,26 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, updatedCount: resApply.updatedCount });
       }
 
-      // Channels
+      // Multi-Channel Generator Endpoints
       if (p.startsWith('/api/admin/channels/facebook/') && req.method === 'GET') {
         const prodId = p.split('/')[5];
         const prod = catalogMgr.getById(prodId);
         if (!prod) return sendJson(res, 404, { ok: false, error: 'Produkt nicht gefunden' });
-        const listing = channelsMgr.generateFacebookListing(prod);
-        return sendJson(res, 200, { ok: true, listing });
+        return sendJson(res, 200, { ok: true, listing: channelsMgr.generateFacebookListing(prod) });
+      }
+
+      if (p.startsWith('/api/admin/channels/kleinanzeigen/') && req.method === 'GET') {
+        const prodId = p.split('/')[5];
+        const prod = catalogMgr.getById(prodId);
+        if (!prod) return sendJson(res, 404, { ok: false, error: 'Produkt nicht gefunden' });
+        return sendJson(res, 200, { ok: true, listing: channelsMgr.generateKleinanzeigenListing(prod) });
+      }
+
+      if (p.startsWith('/api/admin/channels/telegram/') && req.method === 'GET') {
+        const prodId = p.split('/')[5];
+        const prod = catalogMgr.getById(prodId);
+        if (!prod) return sendJson(res, 404, { ok: false, error: 'Produkt nicht gefunden' });
+        return sendJson(res, 200, { ok: true, post: channelsMgr.generateTelegramDropPost(prod) });
       }
 
       if (p === '/api/admin/channels/feed.csv' && req.method === 'GET') {
@@ -662,5 +687,6 @@ const server = http.createServer(async (req, res) => {
 ensureData();
 server.listen(PORT, '0.0.0.0', () => {
   logger.info('STARTUP', `WaWi-Produktivserver läuft auf Port ${PORT} (http://0.0.0.0:${PORT})`);
+  logger.info('STARTUP', `Google Shopping Feed: http://localhost:${PORT}/api/channels/google-shopping.xml`);
   logger.info('STARTUP', `Admin-Panel: http://localhost:${PORT}/admin.html`);
 });
