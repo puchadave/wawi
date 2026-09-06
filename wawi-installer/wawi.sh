@@ -668,11 +668,14 @@ create_lxc() {
         NET_PARAM+=",ip=dhcp"
     fi
 
-    local DISK_SIZE="${DISK}G"
-
-    # PVE rootfs: STORAGE:SIZE  (z.B. local:8G). Template immer auf 'local' (vztmpl),
-    # rootfs bevorzugt lvm-thin (local-lvm) falls vorhanden, sonst Verzeichnis-Storage.
+    # PVE rootfs: STORAGE:SIZE  (z.B. local:8 oder local-lvm:8G).
+    # Template immer auf 'local' (vztmpl), rootfs bevorzugt lvm-thin (local-lvm) falls vorhanden, sonst Verzeichnis-Storage.
     local ROOTFS_STORAGE="$STORAGE"
+    local DISK_SIZE="${DISK}"
+    # LVM-Thin benötigt 'G' Suffix, Directory-Storage (local-data/local) nicht
+    if [[ "$ROOTFS_STORAGE" == "local-lvm" ]] || [[ "$ROOTFS_STORAGE" == *"lvm"* ]]; then
+        DISK_SIZE="${DISK}G"
+    fi
     if pvesm status 2>/dev/null | awk '{print $1}' | grep -qx "local-lvm"; then
         ROOTFS_STORAGE="local-lvm"
     elif pvesm status 2>/dev/null | awk '{print $1}' | grep -qx "local-data"; then
