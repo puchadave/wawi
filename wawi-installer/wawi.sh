@@ -276,10 +276,34 @@ create_lxc() {
         log "Neue CTID: $CTID"
     fi
 
-    local STORAGE="local-lvm"
-    if ! pvesm status 2>/dev/null | awk '{print $1}' | grep -qx "local-lvm"; then
-        STORAGE="local"
+    # Storage-Erkennung: pve04 hat local (templates) + local-data (rootfs), nicht local-lvm
+    local TMPL_STORAGE="local"
+    local ROOTFS_STORAGE="local-lvm"
+    # Ermittle verfuegbare Storages
+    local storages
+    storages=$(pvesm status 2>/dev/null | awk 'NR>1 {print $1}' || true)
+    # Template-Storage: nimmt local wenn vorhanden, sonst erstes mit content vztmpl
+    if ! echo "$storages" | grep -qx "local"; then
+        local c
+        c=$(pvesm status 2>/dev/null | awk 'NR>1 && $0 ~ /vztmpl/ {print $1; exit}' || true)
+        if [[ -n "$c" ]]; then TMPL_STORAGE="$c"; fi
     fi
+    # RootFS-Storage: bevorzuge local-data > local-lvm > local > erstes mit rootdir
+    if echo "$storages" | grep -qx "local-data"; then
+        ROOTFS_STORAGE="local-data"
+    elif echo "$storages" | grep -qx "local-lvm"; then
+        ROOTFS_STORAGE="local-lvm"
+    elif echo "$storages" | grep -qx "local"; then
+        # fallback: local nur wenn wirklich rootdir kann
+        if pvesm status 2>/dev/null | grep -E "^local\b" | grep -q "rootdir"; then
+            ROOTFS_STORAGE="local"
+        fi
+    else
+        local r
+        r=$(pvesm status 2>/dev/null | awk 'NR>1 && $0 ~ /rootdir/ {print $1; exit}' || true)
+        if [[ -n "$r" ]]; then ROOTFS_STORAGE="$r"; fi
+    fi
+    info "Storages: Templates=$TMPL_STORAGE  RootFS=$ROOTFS_STORAGE"
 
     local TEMPLATE="alpine-3.20-default"
     if [[ "$OS_TYPE" == "debian" ]]; then
@@ -293,23 +317,23 @@ create_lxc() {
         FULL_TMPL="$TEMPLATE"
     fi
 
-    if ! pveam list local 2>/dev/null | grep -q "$TEMPLATE"; then
-        info "Lade Template $FULL_TMPL herunter..."
-        pveam download local "$FULL_TMPL" || true
+    if ! pvesm list "$TMPL_STORAGE" --content vztmpl 2>/dev/null | grep -q "$TEMPLATE"; then
+        info "Lade Template $FULL_TMPL auf $TMPL_STORAGE herunter..."
+        pveam download "$TMPL_STORAGE" "$FULL_TMPL" || { err "Template-Download fehlgeschlagen: pveam download $TMPL_STORAGE $FULL_TMPL"; return 1; }
     fi
 
     local ACTUAL_TMPL
-    ACTUAL_TMPL=$(pvesm list local --content vztmpl 2>/dev/null | awk -v pat="$TEMPLATE" '$1 ~ pat {print $1}' | tail -n 1)
+    ACTUAL_TMPL=$(pvesm list "$TMPL_STORAGE" --content vztmpl 2>/dev/null | awk -v pat="$TEMPLATE" '$1 ~ pat {print $1}' | tail -n 1)
     if [[ -z "$ACTUAL_TMPL" ]]; then
-        ACTUAL_TMPL="local:vztmpl/$FULL_TMPL"
+        ACTUAL_TMPL="${TMPL_STORAGE}:vztmpl/$FULL_TMPL"
     fi
 
-    info "Erstelle LXC $CTID mit $ACTUAL_TMPL..."
+    info "Erstelle LXC $CTID mit $ACTUAL_TMPL (rootfs: $ROOTFS_STORAGE)..."
     pct create "$CTID" "$ACTUAL_TMPL" \
         --hostname "wawi-node-$CTID" \
         --memory "$RAM" \
         --cores "$CPU" \
-        --rootfs "${STORAGE}:${DISK}" \
+        --rootfs "${ROOTFS_STORAGE}:${DISK}" \
         --net0 "name=eth0,bridge=vmbr0,ip=dhcp" \
         --ostype "$OS_TYPE" \
         --unprivileged 1 \
