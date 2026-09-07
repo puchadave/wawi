@@ -310,16 +310,39 @@ create_lxc() {
         TEMPLATE="debian-12-standard"
     fi
 
+    # Template: immer aktuellste Version automatisch suchen + downloaden wenn nicht vorhanden
     pveam update >/dev/null 2>&1 || true
     local FULL_TMPL
-    FULL_TMPL=$(pveam available -section system 2>/dev/null | awk -v pat="$TEMPLATE" '$2 ~ pat {print $2}' | sort -V | tail -n 1 || true)
+    # pveam available Spalten: Repository | System | Package — Package ist voller Name (z.B. alpine-3.20-default_20240911_amd64.tar.xz)
+    FULL_TMPL=$(pveam available -section system 2>/dev/null | grep -i "$TEMPLATE" | awk '{for(i=1;i<=NF;i++) if($i ~ /'"$TEMPLATE"'.*\.tar/) print $i}' | sort -V | tail -n 1 || true)
     if [[ -z "$FULL_TMPL" ]]; then
+        # Fallback: nimm Spalte 2 wie zuvor
+        FULL_TMPL=$(pveam available -section system 2>/dev/null | awk -v pat="$TEMPLATE" '$2 ~ pat {print $2}' | grep -E "\.tar" | sort -V | tail -n 1 || true)
+    fi
+    if [[ -z "$FULL_TMPL" ]]; then
+        # Letzter Fallback: short name
         FULL_TMPL="$TEMPLATE"
     fi
+    info "Template Kandidat: $FULL_TMPL"
 
     if ! pvesm list "$TMPL_STORAGE" --content vztmpl 2>/dev/null | grep -q "$TEMPLATE"; then
         info "Lade Template $FULL_TMPL auf $TMPL_STORAGE herunter..."
-        pveam download "$TMPL_STORAGE" "$FULL_TMPL" || { err "Template-Download fehlgeschlagen: pveam download $TMPL_STORAGE $FULL_TMPL"; return 1; }
+        if ! pveam download "$TMPL_STORAGE" "$FULL_TMPL" 2>&1; then
+            warn "Download mit $FULL_TMPL fehlgeschlagen — versuche erneut nach pveam update..."
+            pveam update >/dev/null 2>&1 || true
+            local retry
+            retry=$(pveam available -section system 2>/dev/null | grep -i "$TEMPLATE" | grep -E "\.tar" | sort -V | tail -n 1 | awk '{for(i=1;i<=NF;i++) if($i ~ /\.tar/) print $i}' | head -1 || true)
+            if [[ -n "$retry" && "$retry" != "$FULL_TMPL" ]]; then
+                FULL_TMPL="$retry"
+                info "Retry Template: $FULL_TMPL"
+                pveam download "$TMPL_STORAGE" "$FULL_TMPL" || { err "Template-Download fehlgeschlagen: pveam download $TMPL_STORAGE $FULL_TMPL"; return 1; }
+            else
+                err "Template-Download fehlgeschlagen: pveam download $TMPL_STORAGE $FULL_TMPL"
+                return 1
+            fi
+        fi
+    else
+        info "Template bereits vorhanden — kein Download noetig."
     fi
 
     local ACTUAL_TMPL
