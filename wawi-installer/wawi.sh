@@ -259,6 +259,73 @@ select_specs() {
     log "CTID: $CTID | RAM: ${RAM}MB | CPU: ${CPU} Kerne | Disk: ${DISK}GB"
 }
 
+create_lxc() {
+    header "LXC Container $CTID erstellen"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        info "DRY-RUN: Ueberspringe Container-Erstellung"
+        return 0
+    fi
+
+    # Falls CTID bereits belegt: naechste freie finden (wie deploy-lxc.sh)
+    if pct status "$CTID" >/dev/null 2>&1; then
+        warn "CTID $CTID bereits belegt — suche naechste freie..."
+        local try="$CTID"
+        while pct status "$try" >/dev/null 2>&1; do try=$((try+1)); done
+        CTID="$try"
+        log "Neue CTID: $CTID"
+    fi
+
+    local STORAGE="local-lvm"
+    if ! pvesm status 2>/dev/null | awk '{print $1}' | grep -qx "local-lvm"; then
+        STORAGE="local"
+    fi
+
+    local TEMPLATE="alpine-3.20-default"
+    if [[ "$OS_TYPE" == "debian" ]]; then
+        TEMPLATE="debian-12-standard"
+    fi
+
+    pveam update >/dev/null 2>&1 || true
+    local FULL_TMPL
+    FULL_TMPL=$(pveam available -section system 2>/dev/null | awk -v pat="$TEMPLATE" '$2 ~ pat {print $2}' | sort -V | tail -n 1 || true)
+    if [[ -z "$FULL_TMPL" ]]; then
+        FULL_TMPL="$TEMPLATE"
+    fi
+
+    if ! pveam list local 2>/dev/null | grep -q "$TEMPLATE"; then
+        info "Lade Template $FULL_TMPL herunter..."
+        pveam download local "$FULL_TMPL" || true
+    fi
+
+    local ACTUAL_TMPL
+    ACTUAL_TMPL=$(pvesm list local --content vztmpl 2>/dev/null | awk -v pat="$TEMPLATE" '$1 ~ pat {print $1}' | tail -n 1)
+    if [[ -z "$ACTUAL_TMPL" ]]; then
+        ACTUAL_TMPL="local:vztmpl/$FULL_TMPL"
+    fi
+
+    info "Erstelle LXC $CTID mit $ACTUAL_TMPL..."
+    pct create "$CTID" "$ACTUAL_TMPL" \
+        --hostname "wawi-node-$CTID" \
+        --memory "$RAM" \
+        --cores "$CPU" \
+        --rootfs "${STORAGE}:${DISK}" \
+        --net0 "name=eth0,bridge=vmbr0,ip=dhcp" \
+        --ostype "$OS_TYPE" \
+        --unprivileged 1 \
+        --features "nesting=1,keyctl=1" \
+        --onboot 1 \
+        --description "WaWi Middleware & Swarm Cluster Node"
+
+    pct start "$CTID"
+    info "Warte auf Container Start..."
+    for i in $(seq 1 30); do
+        if pct exec "$CTID" -- true 2>/dev/null; then break; fi
+        sleep 1
+    done
+    log "Container $CTID erfolgreich gebootet."
+}
+
 # ============================================================================
 # ZeroTier VPN Installationsfunktion
 # ============================================================================
@@ -487,24 +554,16 @@ main() {
     elif [[ "$DEPLOY_MODE" == "docker" ]]; then
         deploy_standalone_docker
     else
-        info "Nativer Modus (Alpine nativ, via GitHub RAW wie Live-Test)..."
-        # Wie deploy-lxc.sh: alles ueber GitHub RAW — kein lokaler Clone, identisch zum Live-Test
-        GITHUB_DEPLOY="https://raw.githubusercontent.com/puchadave/wawi/master/shop-kern/deploy-lxc.sh"
-        info "Lade Alpine LXC Installer von GitHub: $GITHUB_DEPLOY"
-        # Lege deploy-lxc in /tmp ab und fuehre es aus (FORCE_GITHUB=1 erzwingt GitHub)
-        pct exec "$CTID" -- /bin/sh -c "apk update && apk add --no-cache nodejs npm ca-certificates curl" 2>/dev/null || true
-        # Fuehre deploy-lxc via GitHub aus — alle Module via GITHUB_RAW
-        curl -fsSL "$GITHUB_DEPLOY" -o /tmp/wawi-deploy-lxc.sh && chmod +x /tmp/wawi-deploy-lxc.sh
-        FORCE_GITHUB=1 GITHUB_RAW="https://raw.githubusercontent.com/puchadave/wawi/master/shop-kern" CTID="$CTID" STORAGE="$STORAGE" HOSTNAME="$HOSTNAME" RAM="$RAM" CPU="$CPU" DISK="$DISK" sh /tmp/wawi-deploy-lxc.sh
-        # Fallback falls CTID bereits existiert: nur WaWi-Files via GitHub nachschieben
-        if [ $? -ne 0 ]; then
-          warn "deploy-lxc via GitHub fehlgeschlagen — nutze GitHub RAW Fallback fuer WaWi-Files"
-          RAW="https://raw.githubusercontent.com/puchadave/wawi/master/shop-kern"
-          for f in server.js public/index.html public/style.css public/shop.js public/admin.html modules/logger.js modules/pricing.js modules/xmlparser.js modules/catalog.js modules/orders.js modules/channels.js modules/mapper.js modules/analytics.js modules/marketplace/base.js modules/marketplace/kaufland.js modules/marketplace/otto.js modules/marketplace/ebay.js modules/marketplace/kleinanzeigen.js modules/marketplace/registry.js; do
-            pct exec "$CTID" -- mkdir -p "/opt/wawi/$(dirname $f)" 2>/dev/null || true
-            curl -fsSL "$RAW/$f" -o "/tmp/wawi-$f" && pct push "$CTID" "/tmp/wawi-$f" "/opt/wawi/$f" || true
-          done
-          pct exec "$CTID" -- /bin/sh -c "cat > /etc/init.d/wawi <<'EOS'
+        info "Nativer Modus — WaWi direkt via GitHub RAW installieren (LXC $CTID bereits erstellt)"
+        RAW="https://raw.githubusercontent.com/puchadave/wawi/master/shop-kern"
+        info "Lade WaWi Files von $RAW in LXC $CTID (wie Live-Test)..."
+        pct exec "$CTID" -- /bin/sh -c "apk update && apk add --no-cache nodejs npm ca-certificates curl" 2>/dev/null || pct exec "$CTID" -- /bin/bash -c "apt-get update && apt-get install -y nodejs npm ca-certificates curl" 2>/dev/null || true
+        pct exec "$CTID" -- mkdir -p /opt/wawi/public /opt/wawi/modules/marketplace /opt/wawi/data
+        for f in server.js public/index.html public/style.css public/shop.js public/admin.html modules/logger.js modules/pricing.js modules/xmlparser.js modules/catalog.js modules/orders.js modules/channels.js modules/mapper.js modules/analytics.js modules/marketplace/base.js modules/marketplace/kaufland.js modules/marketplace/otto.js modules/marketplace/ebay.js modules/marketplace/kleinanzeigen.js modules/marketplace/registry.js; do
+          curl -fsSL "$RAW/$f" -o "/tmp/wawi-$f" && pct push "$CTID" "/tmp/wawi-$f" "/opt/wawi/$f" || warn "Download/Push fehlgeschlagen: $f"
+        done
+        info "Richte OpenRC/systemd Autostart ein..."
+        pct exec "$CTID" -- /bin/sh -c "cat > /etc/init.d/wawi <<'EOS'
 #!/sbin/openrc-run
 name=\"wawi\"
 command=\"/usr/bin/node\"
@@ -514,8 +573,20 @@ pidfile=\"/run/wawi.pid\"
 directory=\"/opt/wawi\"
 depend() { need net; }
 EOS
-chmod +x /etc/init.d/wawi && rc-update add wawi default && rc-service wawi restart || rc-service wawi start"
-        fi
+chmod +x /etc/init.d/wawi && rc-update add wawi default && rc-service wawi restart || rc-service wawi start" 2>/dev/null ||         pct exec "$CTID" -- /bin/bash -c "cat > /etc/systemd/system/wawi.service <<'EOS'
+[Unit]
+Description=WaWi Middleware
+After=network.target
+[Service]
+ExecStart=/usr/bin/node /opt/wawi/server.js 8080
+WorkingDirectory=/opt/wawi
+Restart=always
+[Install]
+WantedBy=multi-user.target
+EOS
+systemctl daemon-reload && systemctl enable --now wawi"
+        IP=$(pct exec "$CTID" -- /bin/sh -c "ip -4 addr show eth0 2>/dev/null | grep -o 'inet [0-9.]*' | awk '{print \$2}'" 2>/dev/null || echo "DHCP")
+        log "WaWi nativ bereit: http://$IP:8080/ — Admin http://$IP:8080/admin.html"
     fi
 }
 
