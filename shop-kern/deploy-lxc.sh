@@ -62,7 +62,7 @@ info "Installiere nodejs (nativ, Alpine) ..."
 pct exec "$CTID" -- /bin/sh -c "apk update && apk add --no-cache nodejs npm ca-certificates curl"
 
 # Shop-Dateien sicherstellen
-FILES_LIST="server.js public/index.html public/style.css public/shop.js public/admin.html modules/logger.js modules/pricing.js modules/xmlparser.js modules/catalog.js modules/orders.js modules/channels.js"
+FILES_LIST="server.js public/index.html public/style.css public/shop.js public/admin.html modules/logger.js modules/pricing.js modules/xmlparser.js modules/catalog.js modules/orders.js modules/channels.js modules/mapper.js modules/analytics.js modules/marketplace/base.js modules/marketplace/kaufland.js modules/marketplace/otto.js modules/marketplace/ebay.js modules/marketplace/kleinanzeigen.js modules/marketplace/registry.js"
 
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "$SRC_DIR/server.js" ]; then
@@ -84,7 +84,7 @@ if [ -z "$LOCAL_SRC" ]; then
 fi
 
 info "Kopiere shop-kern & Module in Container ..."
-pct exec "$CTID" -- mkdir -p /opt/wawi/public /opt/wawi/modules /opt/wawi/data
+pct exec "$CTID" -- mkdir -p /opt/wawi/public /opt/wawi/modules/marketplace /opt/wawi/data
 
 for f in $FILES_LIST; do
   if [ -f "$LOCAL_SRC/$f" ]; then
