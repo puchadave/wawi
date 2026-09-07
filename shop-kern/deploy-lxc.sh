@@ -65,7 +65,7 @@ pct exec "$CTID" -- /bin/sh -c "apk update && apk add --no-cache nodejs npm ca-c
 FILES_LIST="server.js public/index.html public/style.css public/shop.js public/admin.html modules/logger.js modules/pricing.js modules/xmlparser.js modules/catalog.js modules/orders.js modules/channels.js modules/mapper.js modules/analytics.js modules/marketplace/base.js modules/marketplace/kaufland.js modules/marketplace/otto.js modules/marketplace/ebay.js modules/marketplace/kleinanzeigen.js modules/marketplace/registry.js"
 
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ -f "$SRC_DIR/server.js" ]; then
+if [ -f "$SRC_DIR/server.js" ] && [ "${FORCE_GITHUB:-0}" != "1" ]; then
   LOCAL_SRC="$SRC_DIR"
 else
   LOCAL_SRC=""

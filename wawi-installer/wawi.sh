@@ -487,8 +487,35 @@ main() {
     elif [[ "$DEPLOY_MODE" == "docker" ]]; then
         deploy_standalone_docker
     else
-        info "Nativer Modus ausgewählt..."
-        pct exec "$CTID" -- /bin/sh -c "rm -rf /opt/wawi && git clone $REPO_URL /opt/wawi && cd /opt/wavi/shop-kern && node server.js 8080 &"
+        info "Nativer Modus (Alpine nativ, via GitHub RAW wie Live-Test)..."
+        # Wie deploy-lxc.sh: alles ueber GitHub RAW — kein lokaler Clone, identisch zum Live-Test
+        GITHUB_DEPLOY="https://raw.githubusercontent.com/puchadave/wawi/master/shop-kern/deploy-lxc.sh"
+        info "Lade Alpine LXC Installer von GitHub: $GITHUB_DEPLOY"
+        # Lege deploy-lxc in /tmp ab und fuehre es aus (FORCE_GITHUB=1 erzwingt GitHub)
+        pct exec "$CTID" -- /bin/sh -c "apk update && apk add --no-cache nodejs npm ca-certificates curl" 2>/dev/null || true
+        # Fuehre deploy-lxc via GitHub aus — alle Module via GITHUB_RAW
+        curl -fsSL "$GITHUB_DEPLOY" -o /tmp/wawi-deploy-lxc.sh && chmod +x /tmp/wawi-deploy-lxc.sh
+        FORCE_GITHUB=1 GITHUB_RAW="https://raw.githubusercontent.com/puchadave/wawi/master/shop-kern" CTID="$CTID" STORAGE="$STORAGE" HOSTNAME="$HOSTNAME" RAM="$RAM" CPU="$CPU" DISK="$DISK" sh /tmp/wawi-deploy-lxc.sh
+        # Fallback falls CTID bereits existiert: nur WaWi-Files via GitHub nachschieben
+        if [ $? -ne 0 ]; then
+          warn "deploy-lxc via GitHub fehlgeschlagen — nutze GitHub RAW Fallback fuer WaWi-Files"
+          RAW="https://raw.githubusercontent.com/puchadave/wawi/master/shop-kern"
+          for f in server.js public/index.html public/style.css public/shop.js public/admin.html modules/logger.js modules/pricing.js modules/xmlparser.js modules/catalog.js modules/orders.js modules/channels.js modules/mapper.js modules/analytics.js modules/marketplace/base.js modules/marketplace/kaufland.js modules/marketplace/otto.js modules/marketplace/ebay.js modules/marketplace/kleinanzeigen.js modules/marketplace/registry.js; do
+            pct exec "$CTID" -- mkdir -p "/opt/wawi/$(dirname $f)" 2>/dev/null || true
+            curl -fsSL "$RAW/$f" -o "/tmp/wawi-$f" && pct push "$CTID" "/tmp/wawi-$f" "/opt/wawi/$f" || true
+          done
+          pct exec "$CTID" -- /bin/sh -c "cat > /etc/init.d/wawi <<'EOS'
+#!/sbin/openrc-run
+name=\"wawi\"
+command=\"/usr/bin/node\"
+command_args=\"/opt/wawi/server.js 8080\"
+command_background=true
+pidfile=\"/run/wawi.pid\"
+directory=\"/opt/wawi\"
+depend() { need net; }
+EOS
+chmod +x /etc/init.d/wawi && rc-update add wawi default && rc-service wawi restart || rc-service wawi start"
+        fi
     fi
 }
 
