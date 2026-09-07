@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * WaWi Shop-Kern v2.3 — Vollständiges Multi-Channel & Produktionssystem
- * 100% Node.js-Stdlib, KEINE externen Pakete, KEIN Docker, KEINE Build-Stufe.
- *
- * Eingebautes kontinuierliches Debugging, Telemetrie, Request-Tracing & Audit-Logging.
+ * WaWi Middleware — Warehouse Management & Product Intelligence (Headless)
+ * Matterhorn → Adapter → Canonical Model → AI Pipeline → Validation → Shopware Sync
+ * Kein interner Webshop. Shopware ist externe Storefront. Web-Interface = Admin Control Center.
+ * 100% Node.js-Stdlib, kontinuierliches Debugging & Telemetrie.
  */
 'use strict';
 
@@ -80,17 +80,6 @@ function ensureData() {
   }
   if (!fs.existsSync(CONFIG_FILE)) {
     fs.writeFileSync(CONFIG_FILE, JSON.stringify({
-      whatsappNumber: '',
-      facebookProfile: '',
-      shopName: 'Uptempo Store',
-      paymentMethod: 'vorkasse',
-      bankHolder: 'David Puchalla',
-      bankIban: 'DE00 0000 0000 0000 0000 00',
-      bankBic: 'GENODEF1XXX',
-      bankName: 'Volksbank',
-      bankNote: 'Bestellnummer als Verwendungszweck angeben',
-      paypalLink: '',
-      stripePaymentLink: '',
       pricingRules: {
         vatRate: 0.19,
         targetMargin: 0.40,
@@ -109,6 +98,12 @@ function ensureData() {
         otto: { enabled: false, mode: "dryRun", clientId: "", clientSecret: "", baseUrl: "https://api.otto.market/v1", tokenUrl: "https://api.otto.market/v1/token" },
         ebay: { enabled: false, mode: "dryRun", clientId: "", clientSecret: "", refreshToken: "", baseUrl: "https://api.ebay.com" },
         kleinanzeigen: { enabled: false, mode: "dryRun", bridgeUrl: "" }
+      },
+      shopware: {
+        url: "",
+        apiKey: "",
+        syncMode: "manual",
+        syncRules: {}
       },
     }, null, 2));
   }
@@ -133,75 +128,10 @@ function hashPw(pw) {
 }
 
 function seedProducts() {
-  const now = new Date().toISOString();
-  return {
-    products: [
-      {
-        id: 'uptempo-hardcore-crewneck',
-        sku: 'UT-001',
-        name: 'Uptempo Hardcore Crewneck',
-        category: 'Pullover',
-        price: 49.90,
-        supplierEkNet: 18.50,
-        sizes: ['S', 'M', 'L', 'XL'],
-        stock: 25,
-        description: 'Schwerer 450gsm Crewneck, Festival-tauglich, Oversized-Fit.',
-        image: '',
-        active: true,
-        isWhitelisted: true,
-        status: 'approved',
-        created: now,
-      },
-      {
-        id: 'rawstyle-cap',
-        sku: 'UT-002',
-        name: 'Rawstyle Snapback Cap',
-        category: 'Accessoires',
-        price: 19.90,
-        supplierEkNet: 7.20,
-        sizes: ['One Size'],
-        stock: 40,
-        description: 'Schwarz mit gesticktem Logo, verstellbarer Verschluss.',
-        image: '',
-        active: true,
-        isWhitelisted: true,
-        status: 'approved',
-        created: now,
-      },
-      {
-        id: 'gabber-flag',
-        sku: 'UT-003',
-        name: 'Gabber Party Flag 1x1m',
-        category: 'Deko',
-        price: 12.90,
-        supplierEkNet: 4.50,
-        sizes: ['1x1m'],
-        stock: 60,
-        description: 'Digitale Flagge fürs Festival-Dach oder die Wand.',
-        image: '',
-        active: true,
-        isWhitelisted: true,
-        status: 'approved',
-        created: now,
-      },
-      {
-        id: 'hardcore-lanyard',
-        sku: 'UT-004',
-        name: 'Schlüsselband / Lanyard Hardcore',
-        category: 'Accessoires',
-        price: 6.90,
-        supplierEkNet: 1.80,
-        sizes: ['Standard'],
-        stock: 100,
-        description: 'Robustes Festival-Lanyard mit Sicherheitsverschluss.',
-        image: '',
-        active: true,
-        isWhitelisted: true,
-        status: 'approved',
-        created: now,
-      },
-    ],
-  };
+  // No demo shop products — WaWi is middleware, not storefront.
+  // Products are imported via Matterhorn adapter (POST /api/admin/catalog/import-xml),
+  // then normalized, AI-processed and synced to external Shopware.
+  return { products: [] };
 }
 
 /* ---------- Backup-System ---------- */
@@ -299,14 +229,31 @@ function readBody(req) {
 }
 
 function servePublic(res, urlPath) {
-  let file = path.join(PUBLIC_DIR, urlPath === '/' ? 'index.html' : urlPath);
+  // NO INTERNAL WEBSHOP — only admin control center is served publicly
+  // Allowed public assets: admin.html, style.css, and explicit admin resources
+  const allowedPublic = new Set(['/admin.html', '/style.css']);
+  // Root redirects to admin
+  if (urlPath === '/' || urlPath === '/index.html') {
+    res.writeHead(302, { Location: '/admin.html' });
+    return res.end();
+  }
+  if (!allowedPublic.has(urlPath)) {
+    // Block storefront remnants (index.html, shop.js, etc.)
+    if (urlPath === '/shop.js' || urlPath === '/index.html') {
+      res.writeHead(410, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('Gone: internal webshop removed — use /admin.html (WaWi Control Center)');
+    }
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('Not found');
+  }
+  let file = path.join(PUBLIC_DIR, urlPath);
   if (!file.startsWith(PUBLIC_DIR)) { res.writeHead(403); res.end('forbidden'); return; }
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('404 - nicht gefunden'); return; }
     const ext = path.extname(file).toLowerCase();
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
-      'Cache-Control': ext === '.html' ? 'no-store' : 'public, max-age=3600',
+      'Cache-Control': 'no-store',
     });
     res.end(data);
   });
@@ -361,109 +308,17 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // 4. Öffentliche Produktliste (Shop)
-    if (p === '/api/products' && req.method === 'GET') {
-      const active = catalogMgr.getAll({ activeOnly: true });
-      return sendJson(res, 200, { products: active });
+    // 4-6 REMOVED — no internal webshop (Directive: THERE IS NO INTERNAL WEBSHOP)
+    // Public product/config/order endpoints were storefront (cart/checkout/payment)
+    // and have been removed. All product access is via /api/admin/* (authenticated).
+    // Kept for audit: if legacy shop client calls these, respond with 410 Gone.
+    if ((p === '/api/products' && req.method === 'GET') ||
+        (p === '/api/config' && req.method === 'GET') ||
+        (p === '/api/orders' && req.method === 'POST')) {
+      return sendJson(res, 410, { ok: false, error: 'Gone: internal webshop removed — use /api/admin/* (WaWi Control Center) and external Shopware storefront' });
     }
+        // (dead storefront order logic removed — see 410 Gone above)
 
-    // 5. Öffentliche Konfiguration
-    if (p === '/api/config' && req.method === 'GET') {
-      const cfg = readConfig();
-      return sendJson(res, 200, {
-        whatsappNumber: cfg.whatsappNumber || '',
-        facebookProfile: cfg.facebookProfile || '',
-        shopName: cfg.shopName || 'Uptempo Store',
-        paymentMethod: cfg.paymentMethod || 'vorkasse',
-        paypalLink: Boolean(cfg.paypalLink),
-        stripePaymentLink: Boolean(cfg.stripePaymentLink),
-      });
-    }
-
-    // 6. Öffentliche Bestellung
-    if (p === '/api/orders' && req.method === 'POST') {
-      const body = await readBody(req);
-      const { items, customer, paymentMethod } = body;
-
-      if (!Array.isArray(items) || items.length === 0) {
-        return sendJson(res, 400, { ok: false, error: 'Warenkorb ist leer' });
-      }
-      if (!customer || !customer.name || !customer.email || !customer.street || !customer.zip || !customer.city) {
-        return sendJson(res, 400, { ok: false, error: 'Lieferadresse unvollständig' });
-      }
-
-      const products = catalogMgr.loadProducts();
-      let total = 0;
-      const lineItems = [];
-
-      for (const it of items) {
-        const prod = products.find(p => p.id === it.productId);
-        if (!prod) return sendJson(res, 400, { ok: false, error: 'Artikel unbekannt: ' + it.productId });
-        if (prod.stock < it.quantity) {
-          return sendJson(res, 400, { ok: false, error: `Bestand für ${prod.name} reicht nicht aus (nur ${prod.stock} verfügbar)` });
-        }
-        const itemTotal = prod.price * it.quantity;
-        total += itemTotal;
-        lineItems.push({
-          productId: prod.id,
-          name: prod.name,
-          sku: prod.sku,
-          size: it.size || '',
-          price: prod.price,
-          quantity: it.quantity,
-          total: itemTotal,
-        });
-      }
-
-      const order = orderMgr.createOrder({
-        customer,
-        items: lineItems,
-        total,
-        paymentMethod: paymentMethod || 'vorkasse',
-      });
-
-      backupNow('order-' + order.id);
-
-      const cfg = readConfig();
-      const payment = {
-        method: paymentMethod || cfg.paymentMethod || 'vorkasse',
-        instructions: '',
-        links: {},
-      };
-
-      if (payment.method === 'paypal' && cfg.paypalLink) {
-        payment.links.paypal = cfg.paypalLink;
-        payment.instructions = 'Nach dem Klick auf "Jetzt mit PayPal zahlen" wird deine Zahlung direkt verarbeitet.';
-      } else if (payment.method === 'stripe' && cfg.stripePaymentLink) {
-        payment.links.stripe = cfg.stripePaymentLink;
-        payment.instructions = 'Nach dem Klick auf den Zahlungslink wird deine Zahlung per Kreditkarte/Lastschrift verarbeitet.';
-      } else {
-        payment.method = 'vorkasse';
-        payment.instructions = 'Überweise den Betrag innerhalb von 3 Tagen. Die Bestellung wird nach Geldeingang versendet.';
-        payment.bank = {
-          holder: cfg.bankHolder,
-          iban: cfg.bankIban,
-          bic: cfg.bankBic,
-          bank: cfg.bankName,
-          reference: 'Bestellung ' + order.id,
-          note: cfg.bankNote,
-        };
-        payment.giroCodePayload = channelsMgr.generateGiroCodeString(order);
-      }
-
-      const waOrderText = channelsMgr.generateWhatsAppOrderText(order);
-
-      return sendJson(res, 201, {
-        ok: true,
-        orderId: order.id,
-        total,
-        payment,
-        whatsappNumber: cfg.whatsappNumber || '',
-        whatsappMessageText: waOrderText,
-      });
-    }
-
-    // 7. Admin Login
     if (p === '/api/admin/login' && req.method === 'POST') {
       const body = await readBody(req);
       const storedHash = fs.readFileSync(ADMIN_KEY_FILE, 'utf8').trim();
@@ -777,20 +632,7 @@ const server = http.createServer(async (req, res) => {
         const body = await readBody(req);
         const cfg = readConfig();
 
-        if (typeof body.whatsappNumber === 'string') {
-          const num = body.whatsappNumber.trim();
-          if (num === '' || /^\+?[0-9\s-]{6,20}$/.test(num)) cfg.whatsappNumber = num;
-        }
-        if (typeof body.facebookProfile === 'string') cfg.facebookProfile = body.facebookProfile.trim();
-        if (typeof body.shopName === 'string' && body.shopName.trim()) cfg.shopName = body.shopName.trim();
-        if (typeof body.paymentMethod === 'string') cfg.paymentMethod = body.paymentMethod.trim();
-        if (typeof body.bankHolder === 'string') cfg.bankHolder = body.bankHolder.trim();
-        if (typeof body.bankIban === 'string') cfg.bankIban = body.bankIban.trim();
-        if (typeof body.bankBic === 'string') cfg.bankBic = body.bankBic.trim();
-        if (typeof body.bankName === 'string') cfg.bankName = body.bankName.trim();
-        if (typeof body.bankNote === 'string') cfg.bankNote = body.bankNote.trim();
-        if (typeof body.paypalLink === 'string') cfg.paypalLink = body.paypalLink.trim();
-        if (typeof body.stripePaymentLink === 'string') cfg.stripePaymentLink = body.stripePaymentLink.trim();
+        // shop/payment fields removed — WaWi is middleware, not shop. Shop config lives in external Shopware.
         if (body.pricingRules && typeof body.pricingRules === 'object') {
           cfg.pricingRules = { ...cfg.pricingRules, ...body.pricingRules };
         }

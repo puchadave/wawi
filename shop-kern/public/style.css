@@ -1,4 +1,4 @@
-/* WaWi Shop-Kern v2.0 — Dark-Theme, System-Fonts, kein CDN */
+/* WaWi Middleware — Admin Control Center (Dark, System-Fonts, kein CDN) */
 :root {
   --bg: #0b0d10;
   --panel: #14181d;
@@ -25,49 +25,8 @@ body {
 }
 .topbar .wrap { display: flex; justify-content: space-between; align-items: center; height: 56px; }
 .brand { font-weight: 800; letter-spacing: .08em; font-size: 1.1rem; }
-.brand span { color: var(--accent); }
-.cartlink a { color: var(--text); text-decoration: none; padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px; font-size: .9rem; }
-.cartlink a:hover { border-color: var(--accent); color: var(--accent); }
-.hero { padding: 48px 0 24px; }
-.hero h1 { font-size: clamp(1.6rem, 4vw, 2.4rem); line-height: 1.2; }
-.hero p { color: var(--muted); margin-top: 10px; font-size: 1.05rem; }
+.brand span { color: var(--accent); margin-left: 8px; font-weight: 600; font-size: .85rem; }
 h2 { margin: 32px 0 16px; font-size: 1.3rem; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
-.card {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-  padding: 18px; display: flex; flex-direction: column; gap: 8px;
-}
-.card h3 { font-size: 1.05rem; }
-.card .cat { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; }
-.card .desc { color: var(--muted); font-size: .9rem; flex: 1; }
-.card .price { font-weight: 700; font-size: 1.15rem; color: var(--accent); }
-.card .stock { font-size: .78rem; color: var(--muted); }
-.card select, .card button { width: 100%; margin-top: 4px; }
-select, input, textarea, button {
-  background: var(--panel); color: var(--text);
-  border: 1px solid var(--line); border-radius: 8px;
-  padding: 10px 12px; font-size: .95rem; font-family: inherit;
-}
-select:focus, input:focus, textarea:focus { outline: none; border-color: var(--accent); }
-button { cursor: pointer; font-weight: 600; }
-button.primary { border-color: var(--accent); color: var(--accent); }
-button.primary:hover { background: var(--accent); color: #fff; }
-button.wa { background: #25d366; border-color: #25d366; color: #0b0d10; width: 100%; margin-top: 4px; }
-button.wa:hover { background: #1eb857; }
-.wa-btn { display: inline-block; margin-top: 10px; background: #25d366; color: #0b0d10; padding: 10px 14px; border-radius: 8px; text-decoration: none; font-weight: 700; }
-button:disabled { opacity: .5; cursor: not-allowed; }
-.kasse { padding-bottom: 40px; }
-.form { display: flex; flex-direction: column; gap: 12px; max-width: 620px; }
-.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-@media (max-width: 560px) { .row { grid-template-columns: 1fr; } }
-.dsgvo { color: var(--muted); font-size: .78rem; }
-.result { font-weight: 700; }
-.result.ok { color: var(--ok); }
-.result.err { color: var(--accent); }
-.cart-item { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; }
-.cart-item .ci-name { flex: 1; font-size: .92rem; }
-.cart-item .ci-qty { display: flex; align-items: center; gap: 8px; }
-.cart-item .ci-qty button { padding: 4px 10px; }
-.cart-total { font-weight: 700; font-size: 1.1rem; text-align: right; margin: 12px 0; }
-footer { border-top: 1px solid var(--line); padding: 20px 0 40px; color: var(--muted); font-size: .85rem; }
-footer a { color: var(--muted); }
+.btn { background: var(--panel); border: 1px solid var(--line); color: var(--text); padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: .9rem; text-decoration: none; display: inline-block; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn:hover { border-color: var(--accent); }

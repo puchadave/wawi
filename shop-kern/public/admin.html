@@ -45,7 +45,7 @@
 <header class="topbar">
   <div class="wrap">
     <div class="brand">WaWi<span>LEITSTAND & DEBUGGING</span></div>
-    <div class="cartlink"><a href="/">Shop-Ansicht</a></div>
+    <div class="cartlink"><span style="color:var(--muted);font-size:.8rem">Middleware — kein Shop</span></div>
   </div>
 </header>
 
@@ -63,16 +63,35 @@
   <section id="adminArea" style="display:none">
     
     <div class="tab-bar">
-      <button class="tab-btn active" onclick="switchTab('tab-orders')">📦 Bestellungen & Versand</button>
-      <button class="tab-btn" onclick="switchTab('tab-products')">🏷️ Produkte & Sortiment</button>
-      <button class="tab-btn" onclick="switchTab('tab-pricing')">💰 Preiskalkulator</button>
-      <button class="tab-btn" onclick="switchTab('tab-channels')">📢 WhatsApp & Facebook</button>
-      <button class="tab-btn" onclick="switchTab('tab-debug')">⚡ Live-Debugging & Telemetrie</button>
+      <button class="tab-btn active" onclick="switchTab('tab-dashboard')">📊 Dashboard</button>
+      <button class="tab-btn" onclick="switchTab('tab-products')">📦 Produkte</button>
+      <button class="tab-btn" onclick="switchTab('tab-imports')">📥 Importe</button>
+      <button class="tab-btn" onclick="switchTab('tab-ai')">🤖 AI Engine</button>
+      <button class="tab-btn" onclick="switchTab('tab-shopware')">🔗 Shopware</button>
+      <button class="tab-btn" onclick="switchTab('tab-channels')">📡 Kanäle</button>
+      <button class="tab-btn" onclick="switchTab('tab-pricing')">💰 Pricing</button>
+      <button class="tab-btn" onclick="switchTab('tab-debug')">⚡ Logs</button>
     </div>
 
-    <!-- TAB 1: Bestellungen -->
-    <div id="tab-orders" class="tab-pane active">
-      <h2>Bestellübersicht (Echtzeit)</h2>
+    <!-- TAB: Dashboard — System Statistics (Directive) -->
+    <div id="tab-dashboard" class="tab-pane active">
+      <h2>WaWi Control Center — Dashboard</h2>
+      <p style="color:var(--muted);font-size:.9rem">Matterhorn → Canonical → AI → Shopware. Middleware steuert, Shopware verkauft.</p>
+      <div class="metrics-grid" id="metricsGrid" style="margin:12px 0 16px"></div>
+      <div class="order-box">
+        <h3>System Health</h3>
+        <div id="healthBox">Lade...</div>
+      </div>
+      <div class="order-box">
+        <h3>Shopware Sync Status</h3>
+        <div id="shopwareStatusBox">Lade...</div>
+      </div>
+    </div>
+
+    <!-- TAB: Shopware Mirror Orders (kein interner Checkout) -->
+    <div id="tab-orders" class="tab-pane">
+      <h2>Shopware Orders (Mirror) & Versand</h2>
+      <p style="color:var(--muted);font-size:.85rem">Kein interner Checkout — Orders werden aus externem Shopware gespiegelt (Quelle der Wahrheit: Shopware).</p>
       <div class="toolbar">
         <button id="refreshBtn">Neu laden</button>
         <button id="backupBtn">Sofort-Backup sichern</button>
@@ -89,6 +108,51 @@
         <a href="/api/admin/channels/feed.csv" target="_blank" class="btn">CSV Feed-Export</a>
       </div>
       <div id="productsTableContainer">Lade Artikel...</div>
+    </div>
+
+    <!-- TAB: Importe (Matterhorn) -->
+    <div id="tab-imports" class="tab-pane">
+      <h2>Matterhorn Import</h2>
+      <div class="order-box">
+        <h3>XML Import (Adapter)</h3>
+        <p style="font-size:.85rem;color:var(--muted)">Importiert via Matterhorn Adapter → Canonical → validiert → AI Queue. (API: POST /api/admin/catalog/import-xml)</p>
+        <div class="toolbar">
+          <input type="file" id="importFile" accept=".xml">
+          <button id="importBtn">Import starten</button>
+          <label style="font-size:.85rem"><input type="checkbox" id="importWhitelist"> direkt freigeben (whitelisted)</label>
+        </div>
+        <div id="importResult" style="font-size:.85rem;color:var(--muted)"></div>
+      </div>
+      <div class="order-box">
+        <h3>Import History / Logs</h3>
+        <div id="importHistory">Siehe Logs-Tab.</div>
+      </div>
+    </div>
+
+    <!-- TAB: AI Engine -->
+    <div id="tab-ai" class="tab-pane">
+      <h2>AI Engine — Transformation Pipeline</h2>
+      <p style="font-size:.85rem;color:var(--muted)">Processor-Pipeline (Titel/SEO/Attribute) — Status: imported → ai_processed → pending_review → approved → ready_for_sync → synced.</p>
+      <div class="order-box">
+        <h3>AI Verarbeitung</h3>
+        <div id="aiBox">Pipeline-Konfiguration: apps/api (Drizzle) ist Referenz. shop-kern nutzt mapper.js (Canonical→Shopware).</div>
+      </div>
+    </div>
+
+    <!-- TAB: Shopware -->
+    <div id="tab-shopware" class="tab-pane">
+      <h2>Shopware — Externe Storefront</h2>
+      <div class="order-box">
+        <h3>Shopware Verbindung</h3>
+        <div id="shopwareCfgBox">Konfiguration: /api/admin/config (marketplace + shopware.url/apiKey/syncMode)</div>
+        <div class="toolbar" style="margin-top:10px">
+          <button onclick="fetch('/api/admin/debug/system').then(r=>r.json()).then(j=>document.getElementById('shopwareCfgBox').textContent=JSON.stringify(j,null,2))">System laden</button>
+        </div>
+      </div>
+      <div class="order-box">
+        <h3>Sync Queue</h3>
+        <div id="syncQueueBox">Queue: apps/api Queues (stock/price/sync/media) sind Referenz; shop-kern Sync via /api/admin/marketplace/*</div>
+      </div>
     </div>
 
     <!-- TAB 3: Preiskalkulator -->

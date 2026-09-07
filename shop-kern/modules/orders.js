@@ -1,7 +1,11 @@
 'use strict';
 /**
- * WaWi Order Management Module
- * Verwaltet den kompletten Lebenszyklus von Kundenbestellungen mit lückenlosem Audit-Trail.
+ * WaWi Order Mirror — Shopware gespiegelte Bestellungen (kein interner Checkout)
+ * THERE IS NO INTERNAL WEBSHOP. Diese Instanz verwaltet keine Kunden-Warenkoerbe.
+ * Orders stammen ausschliesslich aus externem Shopware (oder Marketplace-Order-Import)
+ * und werden nur gespiegelt/angezeigt (Quelle der Wahrheit: Shopware).
+ * createOrder() wird nur von Marketplace-Adaptern (Kaufland/Otto/eBay) genutzt,
+ * nicht von einem internen Checkout.
  */
 
 const fs = require('fs');
