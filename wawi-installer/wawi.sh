@@ -276,102 +276,150 @@ create_lxc() {
         log "Neue CTID: $CTID"
     fi
 
-    # Storage-Erkennung: pve04 hat local (templates) + local-data (rootfs), nicht local-lvm
+    # --- Storage dynamisch ermitteln (kein Hardcode) ---
     local TMPL_STORAGE="local"
-    local ROOTFS_STORAGE="local-lvm"
-    # Ermittle verfuegbare Storages
+    local ROOTFS_STORAGE="local-data"
     local storages
     storages=$(pvesm status 2>/dev/null | awk 'NR>1 {print $1}' || true)
-    # Template-Storage: nimmt local wenn vorhanden, sonst erstes mit content vztmpl
     if ! echo "$storages" | grep -qx "local"; then
-        local c
-        c=$(pvesm status 2>/dev/null | awk 'NR>1 && $0 ~ /vztmpl/ {print $1; exit}' || true)
-        if [[ -n "$c" ]]; then TMPL_STORAGE="$c"; fi
+        local cs
+        cs=$(pvesm status 2>/dev/null | awk 'NR>1 && $0 ~ /vztmpl/ {print $1; exit}' || true)
+        if [[ -n "$cs" ]]; then TMPL_STORAGE="$cs"; fi
     fi
-    # RootFS-Storage: bevorzuge local-data > local-lvm > local > erstes mit rootdir
     if echo "$storages" | grep -qx "local-data"; then
         ROOTFS_STORAGE="local-data"
     elif echo "$storages" | grep -qx "local-lvm"; then
         ROOTFS_STORAGE="local-lvm"
     elif echo "$storages" | grep -qx "local"; then
-        # fallback: local nur wenn wirklich rootdir kann
-        if pvesm status 2>/dev/null | grep -E "^local\b" | grep -q "rootdir"; then
+        if pvesm status 2>/dev/null | grep -E "^local\\b" | grep -q "rootdir"; then
             ROOTFS_STORAGE="local"
         fi
     else
-        local r
-        r=$(pvesm status 2>/dev/null | awk 'NR>1 && $0 ~ /rootdir/ {print $1; exit}' || true)
-        if [[ -n "$r" ]]; then ROOTFS_STORAGE="$r"; fi
+        local rs
+        rs=$(pvesm status 2>/dev/null | awk 'NR>1 && $0 ~ /rootdir/ {print $1; exit}' || true)
+        if [[ -n "$rs" ]]; then ROOTFS_STORAGE="$rs"; fi
     fi
-    info "Storages: Templates=$TMPL_STORAGE  RootFS=$ROOTFS_STORAGE"
+    # Validierung
+    if [[ -z "$TMPL_STORAGE" ]]; then
+        err "Kein Storage mit vztmpl-Support gefunden."
+        return 1
+    fi
+    info "Template-Storage: $TMPL_STORAGE"
+    info "RootFS-Storage: $ROOTFS_STORAGE"
 
-    local TEMPLATE="alpine-3.20-default"
+    # --- Debian vs Alpine: bei Alpine robust dynamisch, bei Debian analog ---
+    local LATEST_ALPINE_TEMPLATE=""
+    local LATEST_DEBIAN_TEMPLATE=""
+
     if [[ "$OS_TYPE" == "debian" ]]; then
-        TEMPLATE="debian-12-standard"
-    fi
-
-    # Template: immer aktuellste Version automatisch suchen + downloaden wenn nicht vorhanden
-    # Online-Check wie gefordert: erst pveam available, dann download.proxmox.com Schema pruefen
-    pveam update >/dev/null 2>&1 || true
-    local FULL_TMPL=""
-    # 1) pveam Katalog — robust ueber alle Felder, voller Name mit .tar
-    FULL_TMPL=$(pveam available --section system 2>/dev/null | grep -F "$TEMPLATE" | awk '{for(i=1;i<=NF;i++) if($i ~ /\.tar/) print $i}' | sort -V | tail -n 1 || true)
-    if [[ -z "$FULL_TMPL" ]]; then
-        FULL_TMPL=$(pveam available --section system 2>/dev/null | awk -v pat="$TEMPLATE" '$0 ~ pat {for(i=1;i<=NF;i++) if($i ~ /\.tar/) print $i}' | sort -V | tail -n 1 || true)
-    fi
-    info "pveam Kandidat: ${FULL_TMPL:-<leer>}"
-    # 2) Online-Fallback wenn pveam leer oder nur Short-Name
-    if [[ -z "$FULL_TMPL" || "$FULL_TMPL" != *.tar* ]]; then
-        info "Pruefe online verfuegbare Versionen (download.proxmox.com/images/system/)..."
-        local online
-        online=$(curl -fsSL https://download.proxmox.com/images/system/ 2>/dev/null | grep -oE 'alpine-3\.20-default_[^"]+\.tar\.[a-z]+' | sort -V | tail -n 1 || true)
-        if [[ -n "$online" ]]; then
-            FULL_TMPL="$online"
-            info "Online Kandidat (3.20): $FULL_TMPL"
-        else
-            # Fallback: neueste Alpine ueberhaupt
-            local latest
-            latest=$(curl -fsSL https://download.proxmox.com/images/system/ 2>/dev/null | grep -oE 'alpine-[0-9]+\.[0-9]+-default_[^"]+\.tar\.[a-z]+' | sort -V | tail -n 1 || true)
-            if [[ -n "$latest" ]]; then
-                FULL_TMPL="$latest"
-                info "Online Kandidat (neueste): $FULL_TMPL"
-                warn "alpine-3.20 nicht gefunden -- nutze neueste: $FULL_TMPL"
-            fi
+        # Debian: analog dynamisch
+        if ! pveam update >/dev/null 2>&1; then
+            err "Proxmox Template-Index konnte nicht aktualisiert werden."
+            return 1
         fi
-    fi
-    if [[ -z "$FULL_TMPL" ]]; then
-        FULL_TMPL="$TEMPLATE"
-        warn "Kein voller Template-Name ermittelbar -- nutze Short-Name: $FULL_TMPL (kann fehlschlagen)"
-    fi
-    info "Template Kandidat: $FULL_TMPL"
-
-    if ! pvesm list "$TMPL_STORAGE" --content vztmpl 2>/dev/null | grep -q "$TEMPLATE"; then
-        info "Lade Template $FULL_TMPL auf $TMPL_STORAGE herunter..."
-        if ! pveam download "$TMPL_STORAGE" "$FULL_TMPL" 2>&1; then
-            warn "Download mit $FULL_TMPL fehlgeschlagen — versuche erneut nach pveam update..."
-            pveam update >/dev/null 2>&1 || true
-            local retry
-            retry=$(pveam available --section system 2>/dev/null | grep -F "$TEMPLATE" | awk '{for(i=1;i<=NF;i++) if($i ~ /\.tar/) print $i}' | sort -V | tail -n 1 || true)
-            if [[ -z "$retry" ]]; then
-                retry=$(curl -fsSL https://download.proxmox.com/images/system/ 2>/dev/null | grep -oE 'alpine-[0-9]+\.[0-9]+-default_[^"]+\.tar\.[a-z]+' | sort -V | tail -n 1 || true)
-            fi
-            if [[ -n "$retry" && "$retry" != "$FULL_TMPL" ]]; then
-                FULL_TMPL="$retry"
-                info "Retry Template: $FULL_TMPL"
-                pveam download "$TMPL_STORAGE" "$FULL_TMPL" || { err "Template-Download fehlgeschlagen: pveam download $TMPL_STORAGE $FULL_TMPL"; return 1; }
-            else
-                err "Template-Download fehlgeschlagen: pveam download $TMPL_STORAGE $FULL_TMPL"
+        mapfile -t DEB_TEMPLATES < <(pveam available --section system 2>/dev/null | awk '{print $2}' | grep -E '^debian-12-standard_.*_amd64\.tar\.(xz|zst)$' || true)
+        if [[ ${#DEB_TEMPLATES[@]} -eq 0 ]]; then
+            mapfile -t DEB_TEMPLATES < <(pveam available --section system 2>/dev/null | grep -oE 'debian-12-standard_[^[:space:]]+\.tar\.(xz|zst)' || true)
+        fi
+        if [[ ${#DEB_TEMPLATES[@]} -eq 0 ]]; then
+            err "Kein Debian-Template in den Proxmox-Repositories gefunden."
+            return 1
+        fi
+        LATEST_DEBIAN_TEMPLATE=$(printf '%s\n' "${DEB_TEMPLATES[@]}" | sort -V | tail -n 1)
+        if [[ -z "$LATEST_DEBIAN_TEMPLATE" ]]; then
+            err "Kein Debian-Template ermittelbar."
+            return 1
+        fi
+        log "Neueste Debian-Version ermittelt"
+        info "Template: $LATEST_DEBIAN_TEMPLATE"
+        if ! pvesm list "$TMPL_STORAGE" --content vztmpl 2>/dev/null | grep -qF "$LATEST_DEBIAN_TEMPLATE"; then
+            info "Lade Template $LATEST_DEBIAN_TEMPLATE auf $TMPL_STORAGE herunter..."
+            if ! pveam download "$TMPL_STORAGE" "$LATEST_DEBIAN_TEMPLATE"; then
+                err "Template-Download fehlgeschlagen: pveam download $TMPL_STORAGE $LATEST_DEBIAN_TEMPLATE"
                 return 1
             fi
+        else
+            info "Template bereits vorhanden — kein Download noetig."
+        fi
+        if ! pvesm list "$TMPL_STORAGE" --content vztmpl 2>/dev/null | grep -qF "$LATEST_DEBIAN_TEMPLATE"; then
+            err "Template nach Download nicht in $TMPL_STORAGE vorhanden: $LATEST_DEBIAN_TEMPLATE"
+            return 1
+        fi
+        local DEB_ACTUAL
+        DEB_ACTUAL=$(pvesm list "$TMPL_STORAGE" --content vztmpl 2>/dev/null | grep -F "$LATEST_DEBIAN_TEMPLATE" | awk '{print $1}' | head -n 1)
+        if [[ -z "$DEB_ACTUAL" ]]; then
+            DEB_ACTUAL="${TMPL_STORAGE}:vztmpl/$LATEST_DEBIAN_TEMPLATE"
+        fi
+        info "Erstelle LXC $CTID mit $DEB_ACTUAL (rootfs: $ROOTFS_STORAGE)..."
+        pct create "$CTID" "$DEB_ACTUAL" \
+            --hostname "wawi-node-$CTID" \
+            --memory "$RAM" \
+            --cores "$CPU" \
+            --rootfs "${ROOTFS_STORAGE}:${DISK}" \
+            --net0 "name=eth0,bridge=vmbr0,ip=dhcp" \
+            --ostype "$OS_TYPE" \
+            --unprivileged 1 \
+            --features "nesting=1,keyctl=1" \
+            --onboot 1 \
+            --description "WaWi Middleware & Swarm Cluster Node"
+        pct start "$CTID"
+        info "Warte auf Container Start..."
+        for i in $(seq 1 30); do
+            if pct exec "$CTID" -- true 2>/dev/null; then break; fi
+            sleep 1
+        done
+        log "Container $CTID erfolgreich gebootet."
+        return 0
+    fi
+
+    # --- Alpine: robust dynamisch (kein Hardcode!) ---
+    if ! pveam update >/dev/null 2>&1; then
+        err "Proxmox Template-Index konnte nicht aktualisiert werden."
+        return 1
+    fi
+
+    # Verfügbare Alpine-Templates ermitteln — robust, spaltenunabhängig
+    mapfile -t ALPINE_TEMPLATES < <(pveam available --section system 2>/dev/null | awk '{print $2}' | grep -E '^alpine-[0-9]+\.[0-9]+-default_.*_amd64\.tar\.(xz|zst)$' || true)
+    if [[ ${#ALPINE_TEMPLATES[@]} -eq 0 ]]; then
+        # Fallback: suche über alle Felder falls Spalte 2 abweicht
+        mapfile -t ALPINE_TEMPLATES < <(pveam available --section system 2>/dev/null | grep -oE 'alpine-[0-9]+\.[0-9]+-default_[^[:space:]]+\.tar\.(xz|zst)' || true)
+    fi
+
+    if [[ ${#ALPINE_TEMPLATES[@]} -eq 0 ]]; then
+        err "Kein aktuelles Alpine-LXC-Template in den Proxmox-Repositories gefunden."
+        return 1
+    fi
+
+    # Neueste Version korrekt bestimmen (sort -V berücksichtigt Version + Datum)
+    LATEST_ALPINE_TEMPLATE=$(printf '%s\n' "${ALPINE_TEMPLATES[@]}" | sort -V | tail -n 1)
+
+    if [[ -z "${LATEST_ALPINE_TEMPLATE:-}" ]]; then
+        err "Kein aktuelles Alpine-LXC-Template in den Proxmox-Repositories gefunden."
+        return 1
+    fi
+
+    log "Neueste Alpine-Version ermittelt"
+    info "Template: $LATEST_ALPINE_TEMPLATE"
+
+    # Download ausschließlich mit exaktem Template-Namen
+    if ! pvesm list "$TMPL_STORAGE" --content vztmpl 2>/dev/null | grep -qF "$LATEST_ALPINE_TEMPLATE"; then
+        info "Lade Template $LATEST_ALPINE_TEMPLATE auf $TMPL_STORAGE herunter..."
+        if ! pveam download "$TMPL_STORAGE" "$LATEST_ALPINE_TEMPLATE"; then
+            err "Template-Download fehlgeschlagen."
+            return 1
+        fi
+        if ! pvesm list "$TMPL_STORAGE" --content vztmpl 2>/dev/null | grep -qF "$LATEST_ALPINE_TEMPLATE"; then
+            err "Template nach Download nicht in $TMPL_STORAGE vorhanden: $LATEST_ALPINE_TEMPLATE"
+            return 1
         fi
     else
         info "Template bereits vorhanden — kein Download noetig."
     fi
 
     local ACTUAL_TMPL
-    ACTUAL_TMPL=$(pvesm list "$TMPL_STORAGE" --content vztmpl 2>/dev/null | awk -v pat="$TEMPLATE" '$1 ~ pat {print $1}' | tail -n 1)
+    ACTUAL_TMPL=$(pvesm list "$TMPL_STORAGE" --content vztmpl 2>/dev/null | grep -F "$LATEST_ALPINE_TEMPLATE" | awk '{print $1}' | head -n 1)
     if [[ -z "$ACTUAL_TMPL" ]]; then
-        ACTUAL_TMPL="${TMPL_STORAGE}:vztmpl/$FULL_TMPL"
+        ACTUAL_TMPL="${TMPL_STORAGE}:vztmpl/$LATEST_ALPINE_TEMPLATE"
     fi
 
     info "Erstelle LXC $CTID mit $ACTUAL_TMPL (rootfs: $ROOTFS_STORAGE)..."
