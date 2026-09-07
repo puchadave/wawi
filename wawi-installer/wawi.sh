@@ -311,17 +311,37 @@ create_lxc() {
     fi
 
     # Template: immer aktuellste Version automatisch suchen + downloaden wenn nicht vorhanden
+    # Online-Check wie gefordert: erst pveam available, dann download.proxmox.com Schema pruefen
     pveam update >/dev/null 2>&1 || true
-    local FULL_TMPL
-    # pveam available Spalten: Repository | System | Package — Package ist voller Name (z.B. alpine-3.20-default_20240911_amd64.tar.xz)
-    FULL_TMPL=$(pveam available -section system 2>/dev/null | grep -i "$TEMPLATE" | awk '{for(i=1;i<=NF;i++) if($i ~ /'"$TEMPLATE"'.*\.tar/) print $i}' | sort -V | tail -n 1 || true)
+    local FULL_TMPL=""
+    # 1) pveam Katalog — robust ueber alle Felder, voller Name mit .tar
+    FULL_TMPL=$(pveam available --section system 2>/dev/null | grep -F "$TEMPLATE" | awk '{for(i=1;i<=NF;i++) if($i ~ /\.tar/) print $i}' | sort -V | tail -n 1 || true)
     if [[ -z "$FULL_TMPL" ]]; then
-        # Fallback: nimm Spalte 2 wie zuvor
-        FULL_TMPL=$(pveam available -section system 2>/dev/null | awk -v pat="$TEMPLATE" '$2 ~ pat {print $2}' | grep -E "\.tar" | sort -V | tail -n 1 || true)
+        FULL_TMPL=$(pveam available --section system 2>/dev/null | awk -v pat="$TEMPLATE" '$0 ~ pat {for(i=1;i<=NF;i++) if($i ~ /\.tar/) print $i}' | sort -V | tail -n 1 || true)
+    fi
+    info "pveam Kandidat: ${FULL_TMPL:-<leer>}"
+    # 2) Online-Fallback wenn pveam leer oder nur Short-Name
+    if [[ -z "$FULL_TMPL" || "$FULL_TMPL" != *.tar* ]]; then
+        info "Pruefe online verfuegbare Versionen (download.proxmox.com/images/system/)..."
+        local online
+        online=$(curl -fsSL https://download.proxmox.com/images/system/ 2>/dev/null | grep -oE 'alpine-3\.20-default_[^"]+\.tar\.[a-z]+' | sort -V | tail -n 1 || true)
+        if [[ -n "$online" ]]; then
+            FULL_TMPL="$online"
+            info "Online Kandidat (3.20): $FULL_TMPL"
+        else
+            # Fallback: neueste Alpine ueberhaupt
+            local latest
+            latest=$(curl -fsSL https://download.proxmox.com/images/system/ 2>/dev/null | grep -oE 'alpine-[0-9]+\.[0-9]+-default_[^"]+\.tar\.[a-z]+' | sort -V | tail -n 1 || true)
+            if [[ -n "$latest" ]]; then
+                FULL_TMPL="$latest"
+                info "Online Kandidat (neueste): $FULL_TMPL"
+                warn "alpine-3.20 nicht gefunden -- nutze neueste: $FULL_TMPL"
+            fi
+        fi
     fi
     if [[ -z "$FULL_TMPL" ]]; then
-        # Letzter Fallback: short name
         FULL_TMPL="$TEMPLATE"
+        warn "Kein voller Template-Name ermittelbar -- nutze Short-Name: $FULL_TMPL (kann fehlschlagen)"
     fi
     info "Template Kandidat: $FULL_TMPL"
 
@@ -331,7 +351,10 @@ create_lxc() {
             warn "Download mit $FULL_TMPL fehlgeschlagen — versuche erneut nach pveam update..."
             pveam update >/dev/null 2>&1 || true
             local retry
-            retry=$(pveam available -section system 2>/dev/null | grep -i "$TEMPLATE" | grep -E "\.tar" | sort -V | tail -n 1 | awk '{for(i=1;i<=NF;i++) if($i ~ /\.tar/) print $i}' | head -1 || true)
+            retry=$(pveam available --section system 2>/dev/null | grep -F "$TEMPLATE" | awk '{for(i=1;i<=NF;i++) if($i ~ /\.tar/) print $i}' | sort -V | tail -n 1 || true)
+            if [[ -z "$retry" ]]; then
+                retry=$(curl -fsSL https://download.proxmox.com/images/system/ 2>/dev/null | grep -oE 'alpine-[0-9]+\.[0-9]+-default_[^"]+\.tar\.[a-z]+' | sort -V | tail -n 1 || true)
+            fi
             if [[ -n "$retry" && "$retry" != "$FULL_TMPL" ]]; then
                 FULL_TMPL="$retry"
                 info "Retry Template: $FULL_TMPL"
