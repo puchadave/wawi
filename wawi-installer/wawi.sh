@@ -28,6 +28,10 @@ API_PORT=8080
 REPO_URL="https://github.com/puchadave/wawi.git"
 INSTALL_DIR="/opt/wawi"
 ADMIN_USER="puchadev"
+WAWI_ADMIN_USERNAME=""
+WAWI_ADMIN_EMAIL=""
+WAWI_ADMIN_PASSWORD=""
+WAWI_ADMIN_PASSWORD_HASH=""
 QUIET=false
 GUI=true
 DRY_RUN=false
@@ -67,6 +71,10 @@ parse_args() {
             --swarm-ip)    SWARM_MANAGER_IP="$2"; shift 2 ;;
             --swarm-token) SWARM_JOIN_TOKEN="$2"; shift 2 ;;
             --admin-pass)  PORTAINER_ADMIN_PASS="$2"; shift 2 ;;
+            --wawi-admin-user) WAWI_ADMIN_USERNAME="$2"; shift 2 ;;
+            --wawi-admin-email) WAWI_ADMIN_EMAIL="$2"; shift 2 ;;
+            --wawi-admin-pass) WAWI_ADMIN_PASSWORD="$2"; shift 2 ;;
+            --wawi-admin-hash) WAWI_ADMIN_PASSWORD_HASH="$2"; shift 2 ;;
             --zerotier)    INSTALL_ZEROTIER=true; shift ;;
             --zt-network)  ZEROTIER_NETWORK_ID="$2"; shift 2 ;;
             --no-gui)      GUI=false; shift ;;
@@ -81,6 +89,10 @@ parse_args() {
                 echo "  --swarm-ip <ip>                    Manager IP bei Worker Join"
                 echo "  --swarm-token <token>              Swarm Join Token"
                 echo "  --admin-pass <pass>                Portainer Initial-Passwort"
+                echo "  --wawi-admin-user <user>           WaWi Administrator Benutzername"
+                echo "  --wawi-admin-email <email>         WaWi Administrator E-Mail"
+                echo "  --wawi-admin-pass <pass>           WaWi Administrator Passwort (Klartext, wird mit Argon2id gehashed)"
+                echo "  --wawi-admin-hash <hash>           WaWi Administrator Argon2id-Hash (bevorzugt, kein Klartext)"
                 echo "  --os <alpine|debian>               Basis-OS (Default: alpine)"
                 echo "  --ctid <id>                        Container-ID (Default: 301)"
                 echo "  --no-gui                       Headless Modus"
@@ -257,6 +269,111 @@ select_specs() {
     fi
 
     log "CTID: $CTID | RAM: ${RAM}MB | CPU: ${CPU} Kerne | Disk: ${DISK}GB"
+}
+
+configure_admin_credentials() {
+    # Non-interactive: credentials already provided via CLI or env
+    if [[ -n "$WAWI_ADMIN_USERNAME" && (-n "$WAWI_ADMIN_PASSWORD" || -n "$WAWI_ADMIN_PASSWORD_HASH") ]]; then
+        info "WaWi Administrator aus CLI/ENV: ${WAWI_ADMIN_USERNAME} (${WAWI_ADMIN_EMAIL:-admin@matterhorn-wholesale.com})"
+        if [[ -n "$WAWI_ADMIN_PASSWORD_HASH" ]]; then
+            info "WaWi Admin-Hash liegt vor (Argon2id, wird im LXC/Compose an bootstrapAdmin uebergeben)"
+            WAWI_ADMIN_PASSWORD=""
+        elif [[ -n "$WAWI_ADMIN_PASSWORD" ]]; then
+            if command -v node &>/dev/null; then
+                local _wawi_hash
+                _wawi_hash=$(node -e "
+try {
+  const a=require('argon2');
+  a.hash(process.argv[1],{type:a.argon2id,memoryCost:65536,timeCost:3,parallelism:4}).then(h=>process.stdout.write(h)).catch(()=>process.exit(1));
+} catch(e){ process.exit(2); }
+" -- "$WAWI_ADMIN_PASSWORD" 2>/dev/null || true)
+                if [[ -n "$_wawi_hash" ]]; then
+                    WAWI_ADMIN_PASSWORD_HASH="$_wawi_hash"
+                    WAWI_ADMIN_PASSWORD=""
+                    info "WaWi Admin-Passwort wurde lokal zu Argon2id gehashed (Klartext verworfen)"
+                else
+                    warn "Argon2id-Hashing nicht verfuegbar — Klartext wird als ENV an bootstrapAdmin uebergeben (dort gehashed)"
+                fi
+            fi
+        fi
+        [[ -z "$WAWI_ADMIN_EMAIL" ]] && WAWI_ADMIN_EMAIL="admin@matterhorn-wholesale.com"
+        return 0
+    fi
+
+    # Non-GUI / headless without credentials: fallback kept for backward compatibility (bootstrapAdmin generates pucha.dev)
+    # Hash-based login (argon2 --id) is the only mechanism for the middleware Control Center (no JWT_SECRET overloading).
+    if [[ "$GUI" != true ]]; then
+        log "WaWi Administrator: kein interaktiver Setup im Headless-Modus — Bootstrap nutzt vorhandenen oder generierten pucha.dev"
+        [[ -z "$WAWI_ADMIN_USERNAME" ]] && WAWI_ADMIN_USERNAME="$ADMIN_USER"
+        return 0
+    fi
+
+    # Interactive (whiptail) — consistent with Phase A UX: WaWi Administrator Setup vor Ressourcenauswahl endet hier
+    local _wawi_user _wawi_email _wawi_pass _wawi_pass2 _wawi_err
+    local _wawi_default_user="${WAWI_ADMIN_USERNAME:-$ADMIN_USER}"
+    local _wawi_default_email="${WAWI_ADMIN_EMAIL:-admin@matterhorn-wholesale.com}"
+
+    header "WaWi Administrator Setup"
+
+    _wawi_user=$(whiptail --inputbox "WaWi Administrator Benutzername:" 10 60 "$_wawi_default_user" 3>&1 1>&2 2>&3) || _wawi_user="$_wawi_default_user"
+    _wawi_user="$(echo -n "$_wawi_user" | tr -d '\r\n' | xargs 2>/dev/null || echo -n "$_wawi_user")"
+    [[ -z "$_wawi_user" ]] && _wawi_user="$ADMIN_USER"
+    WAWI_ADMIN_USERNAME="$_wawi_user"
+
+    _wawi_email=$(whiptail --inputbox "WaWi Administrator E-Mail:" 10 60 "$_wawi_default_email" 3>&1 1>&2 2>&3) || _wawi_email="$_wawi_default_email"
+    _wawi_email="$(echo -n "$_wawi_email" | tr -d '\r\n' | xargs 2>/dev/null || echo -n "$_wawi_email")"
+    [[ -z "$_wawi_email" ]] && _wawi_email="admin@matterhorn-wholesale.com"
+    WAWI_ADMIN_EMAIL="$_wawi_email"
+
+    while true; do
+        _wawi_pass=$(whiptail --passwordbox "WaWi Administrator Passwort:\n(mind. 12 Zeichen, Groß/Klein, Zahl, Sonderzeichen !@#\$%^&*)" 10 70 3>&1 1>&2 2>&3) || _wawi_pass=""
+        _wawi_pass2=$(whiptail --passwordbox "Passwort bestaetigen:" 10 60 3>&1 1>&2 2>&3) || _wawi_pass2=""
+
+        if [[ -z "$_wawi_pass" ]]; then
+            whiptail --msgbox "Passwort darf nicht leer sein." 8 50 3>&1 1>&2 2>&3 || true
+            continue
+        fi
+        if [[ "$_wawi_pass" != "$_wawi_pass2" ]]; then
+            whiptail --msgbox "Passwoerter stimmen nicht ueberein." 8 50 3>&1 1>&2 2>&3 || true
+            continue
+        fi
+
+        _wawi_err=""
+        [[ ${#_wawi_pass} -lt 12 ]] && _wawi_err+="- Mindestens 12 Zeichen\n"
+        [[ "$_wawi_pass" != *[!@#\$%^\&*]* ]] && _wawi_err+="- Mindestens ein Sonderzeichen (!@#\$%^&*)\n"
+        [[ "$_wawi_pass" != *[A-Z]* ]] && _wawi_err+="- Mindestens ein Grossbuchstabe (A-Z)\n"
+        [[ "$_wawi_pass" != *[a-z]* ]] && _wawi_err+="- Mindestens ein Kleinbuchstabe (a-z)\n"
+        [[ "$_wawi_pass" != *[0-9]* ]] && _wawi_err+="- Mindestens eine Zahl (0-9)\n"
+        if [[ -n "$_wawi_err" ]]; then
+            whiptail --msgbox "Passwort zu schwach:\n${_wawi_err}" 12 60 3>&1 1>&2 2>&3 || true
+            continue
+        fi
+        break
+    done
+
+    if command -v node &>/dev/null; then
+        local _wawi_h2
+        _wawi_h2=$(node -e "
+try {
+  const a=require('argon2');
+  a.hash(process.argv[1],{type:a.argon2id,memoryCost:65536,timeCost:3,parallelism:4}).then(h=>process.stdout.write(h)).catch(()=>process.exit(1));
+} catch(e){ process.exit(2); }
+" -- "$_wawi_pass" 2>/dev/null || true)
+        if [[ -n "$_wawi_h2" ]]; then
+            WAWI_ADMIN_PASSWORD_HASH="$_wawi_h2"
+            WAWI_ADMIN_PASSWORD=""
+        else
+            WAWI_ADMIN_PASSWORD="$_wawi_pass"
+            WAWI_ADMIN_PASSWORD_HASH=""
+        fi
+    else
+        WAWI_ADMIN_PASSWORD="$_wawi_pass"
+        WAWI_ADMIN_PASSWORD_HASH=""
+    fi
+    # Clear plaintext from local vars
+    _wawi_pass=""; _wawi_pass2=""; _wawi_err=""
+
+    log "WaWi Administrator konfiguriert: ${WAWI_ADMIN_USERNAME} <${WAWI_ADMIN_EMAIL}>"
 }
 
 create_lxc() {
@@ -581,8 +698,21 @@ docker stack deploy -c /root/portainer-agent-stack.yml portainer"
 
         # 3. WaWi Repository klonen und deployen
         info "Klone WaWi Repository und deploye WaWi Swarm Stack..."
+        # WaWi Admin ENV an Stack weitergeben (Argon2id-Hash bevorzugt; Klartext wird im Bootstrap gehashed; anschließend sensitive ENV leeren)
+        local _wawi_env_args=""
+        [[ -n "$WAWI_ADMIN_USERNAME" ]] && _wawi_env_args+=" -e WAWI_ADMIN_USERNAME=${WAWI_ADMIN_USERNAME@Q}"
+        [[ -n "$WAWI_ADMIN_EMAIL" ]] && _wawi_env_args+=" -e WAWI_ADMIN_EMAIL=${WAWI_ADMIN_EMAIL@Q}"
+        [[ -n "$WAWI_ADMIN_PASSWORD_HASH" ]] && _wawi_env_args+=" -e WAWI_ADMIN_PASSWORD_HASH=${WAWI_ADMIN_PASSWORD_HASH@Q}"
+        if [[ -z "$WAWI_ADMIN_PASSWORD_HASH" && -n "$WAWI_ADMIN_PASSWORD" ]]; then
+            _wawi_env_args+=" -e WAWI_ADMIN_PASSWORD=${WAWI_ADMIN_PASSWORD@Q}"
+        fi
         pct exec "$CTID" -- /bin/sh -c "rm -rf /opt/wawi && git clone $REPO_URL /opt/wawi"
-        pct exec "$CTID" -- /bin/sh -c "cd /opt/wawi && docker build -t puchadave/wawi-middleware:latest . && docker stack deploy -c docker-compose.swarm.yml wawi"
+        if [[ -n "$_wawi_env_args" ]]; then
+            # shellcheck disable=SC2086
+            pct exec "$CTID" -- /bin/sh -c "cd /opt/wawi && docker build -t puchadave/wawi-middleware:latest . && env $_wawi_env_args docker stack deploy -c docker-compose.swarm.yml wawi"
+        else
+            pct exec "$CTID" -- /bin/sh -c "cd /opt/wawi && docker build -t puchadave/wawi-middleware:latest . && docker stack deploy -c docker-compose.swarm.yml wawi"
+        fi
 
         # Swarm Join Tokens auslesen
         local WORKER_TOKEN
@@ -603,7 +733,12 @@ docker stack deploy -c /root/portainer-agent-stack.yml portainer"
         echo "  ZeroTier VPN:           ${ZEROTIER_NETWORK_ID:+aktiv (Network ID: ${ZEROTIER_NETWORK_ID})}"
         echo ""
         echo "  WaWi Middleware API:    http://${IP:-<IP>}:8080/api/health"
-        echo "  WaWi Admin Leitstand:   http://${IP:-<IP>}:8080/admin.html"
+        local _cc_url="http://${IP:-<IP>}:8080"
+        if [[ -n "$WAWI_ADMIN_USERNAME" ]]; then
+            echo "  WaWi Control Center:    ${_cc_url}  (User: ${WAWI_ADMIN_USERNAME} <${WAWI_ADMIN_EMAIL:-admin@matterhorn-wholesale.com}>)"
+        else
+            echo "  WaWi Control Center:    ${_cc_url}  (Bootstrap: ${ADMIN_USER} / PW aus stack-root/pucha.dev)"
+        fi
         echo "  Google Shopping Feed:   http://${IP:-<IP>}:8080/api/channels/google-shopping.xml"
         echo ""
         echo "  JOIN-BEFEHLE FÜR WEITERE CLUSTER-NODES:"
@@ -650,7 +785,19 @@ deploy_standalone_docker() {
     pct exec "$CTID" -- /bin/sh -c "docker run -d -p 9001:9001 --name portainer_agent --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/docker/volumes:/var/lib/docker/volumes portainer/agent:latest || true"
 
     info "Klone WaWi Repository und starte Docker Compose..."
-    pct exec "$CTID" -- /bin/sh -c "rm -rf /opt/wawi && git clone $REPO_URL /opt/wawi && cd /opt/wawi && docker compose up -d --build"
+    local _wawi_compose_env=""
+    [[ -n "$WAWI_ADMIN_USERNAME" ]] && _wawi_compose_env+="WAWI_ADMIN_USERNAME=${WAWI_ADMIN_USERNAME@Q} "
+    [[ -n "$WAWI_ADMIN_EMAIL" ]] && _wawi_compose_env+="WAWI_ADMIN_EMAIL=${WAWI_ADMIN_EMAIL@Q} "
+    [[ -n "$WAWI_ADMIN_PASSWORD_HASH" ]] && _wawi_compose_env+="WAWI_ADMIN_PASSWORD_HASH=${WAWI_ADMIN_PASSWORD_HASH@Q} "
+    if [[ -z "$WAWI_ADMIN_PASSWORD_HASH" && -n "$WAWI_ADMIN_PASSWORD" ]]; then
+        _wawi_compose_env+="WAWI_ADMIN_PASSWORD=${WAWI_ADMIN_PASSWORD@Q} "
+    fi
+    if [[ -n "$_wawi_compose_env" ]]; then
+        # shellcheck disable=SC2086
+        pct exec "$CTID" -- /bin/sh -c "rm -rf /opt/wawi && git clone $REPO_URL /opt/wawi && cd /opt/wawi && env $_wawi_compose_env docker compose up -d --build"
+    else
+        pct exec "$CTID" -- /bin/sh -c "rm -rf /opt/wawi && git clone $REPO_URL /opt/wawi && cd /opt/wawi && docker compose up -d --build"
+    fi
 
     log "Docker Compose Stack aktiv."
 }
@@ -665,6 +812,7 @@ main() {
     select_swarm_config
     select_os
     select_specs
+    configure_admin_credentials
     create_lxc
 
     if [[ "$DEPLOY_MODE" == "swarm" ]]; then

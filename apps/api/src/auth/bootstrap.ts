@@ -1,7 +1,7 @@
 import { db } from '../db.js';
 import { users, roles, permissions, userRoles, rolePermissions } from '../schema.js';
 import { eq } from 'drizzle-orm';
-import { hashPassword, generateSecurePassword } from './password.js';
+import { hashPassword, generateSecurePassword, validatePasswordStrength } from './password.js';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import path from 'path';
@@ -27,6 +27,7 @@ const DEFAULT_PERMISSIONS = [
 ];
 
 const BOOTSTRAP_ADMIN_USERNAME = 'puchadev';
+const BOOTSTRAP_ADMIN_EMAIL = 'admin@matterhorn-wholesale.com';
 
 export async function bootstrapAdmin(): Promise<void> {
   const stackRoot = path.resolve(__dirname, '../../../stack-root');
@@ -95,35 +96,60 @@ export async function bootstrapAdmin(): Promise<void> {
     console.log('  ✓ Viewer role created');
   }
 
-  // Step 4: Create bootstrap admin if not exists
+  // Step 4: Create bootstrap admin if not exists — installer-driven credentials take precedence
+  const envUsername = (process.env.WAWI_ADMIN_USERNAME || process.env.ADMIN_USER || '').trim();
+  const envEmail = (process.env.WAWI_ADMIN_EMAIL || '').trim();
+  const envPassword = (process.env.WAWI_ADMIN_PASSWORD || '').trim();
+  const envPasswordHash = (process.env.WAWI_ADMIN_PASSWORD_HASH || '').trim();
+
+  const bootstrapUsername = envUsername || BOOTSTRAP_ADMIN_USERNAME;
+  const bootstrapEmail = envEmail || BOOTSTRAP_ADMIN_EMAIL;
+
   const existingAdmin = await db.select()
     .from(users)
-    .where(eq(users.username, BOOTSTRAP_ADMIN_USERNAME))
+    .where(eq(users.username, bootstrapUsername))
     .limit(1);
 
   if (!existingAdmin.length) {
-    let adminPassword: string;
+    let passwordHash: string;
+    let passwordSource: string;
 
-    if (fs.existsSync(passwordFilePath)) {
-      adminPassword = fs.readFileSync(passwordFilePath, 'utf-8').trim();
+    if (envPasswordHash) {
+      // Pre-hashed (Argon2id) provided by installer — never store plaintext
+      passwordHash = envPasswordHash;
+      passwordSource = 'WAWI_ADMIN_PASSWORD_HASH (installer, Argon2id)';
+    } else if (envPassword) {
+      const strength = validatePasswordStrength(envPassword);
+      if (!strength.valid) {
+        console.warn(`  ! WAWI_ADMIN_PASSWORD does not meet strength requirements: ${strength.errors.join('; ')} — continuing with provided password`);
+      }
+      passwordHash = await hashPassword(envPassword);
+      passwordSource = 'WAWI_ADMIN_PASSWORD (installer, hashed with Argon2id)';
+    } else if (fs.existsSync(passwordFilePath)) {
+      const adminPassword = fs.readFileSync(passwordFilePath, 'utf-8').trim();
+      if (!adminPassword) {
+        throw new Error(`Password file ${passwordFilePath} is empty`);
+      }
+      passwordHash = await hashPassword(adminPassword);
+      passwordSource = `stack-root/pucha.dev`;
       console.log('  ✓ Bootstrap admin password loaded from file');
     } else {
-      adminPassword = generateSecurePassword(32);
-
+      const adminPassword = generateSecurePassword(32);
       if (!fs.existsSync(stackRoot)) {
         fs.mkdirSync(stackRoot, { recursive: true });
       }
       fs.writeFileSync(passwordFilePath, adminPassword, { mode: 0o600 });
       console.log('  ✓ Bootstrap admin password generated and saved to stack-root/pucha.dev');
+      passwordHash = await hashPassword(adminPassword);
+      passwordSource = 'generated (stack-root/pucha.dev)';
     }
 
-    const passwordHash = await hashPassword(adminPassword);
     const userId = uuidv4();
 
     await db.insert(users).values({
       id: userId,
-      username: BOOTSTRAP_ADMIN_USERNAME,
-      email: 'admin@matterhorn-wholesale.com',
+      username: bootstrapUsername,
+      email: bootstrapEmail,
       passwordHash,
       fullName: 'Bootstrap Admin',
       isActive: true,
@@ -139,8 +165,8 @@ export async function bootstrapAdmin(): Promise<void> {
       });
     }
 
-    console.log(`  ✓ Bootstrap admin "${BOOTSTRAP_ADMIN_USERNAME}" created`);
+    console.log(`  ✓ Bootstrap admin "${bootstrapUsername}" <${bootstrapEmail}> created via ${passwordSource}`);
   } else {
-    console.log(`  ✓ Bootstrap admin "${BOOTSTRAP_ADMIN_USERNAME}" already exists`);
+    console.log(`  ✓ Bootstrap admin "${bootstrapUsername}" already exists`);
   }
 }
