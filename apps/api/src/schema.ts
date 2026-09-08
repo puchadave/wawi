@@ -60,6 +60,47 @@ export const syncAttempts = pgTable('sync_attempts', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+// --- Matterhorn Import Management ---
+
+export const matterhornConnections = pgTable('matterhorn_connections', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  type: text('type', { enum: ['xml', 'csv', 'json', 'api', 'ftp', 'sftp', 'matterhorn'] }).default('xml').notNull(),
+  endpoint: text('endpoint'),
+  auth: jsonb('auth').$type<Record<string, string>>().default({}).notNull(),
+  mapping: jsonb('mapping').$type<Record<string, string>>().default({}).notNull(),
+  schedule: text('schedule'),
+  isEnabled: boolean('is_enabled').default(true).notNull(),
+  lastTestedAt: timestamp('last_tested_at'),
+  lastTestResult: jsonb('last_test_result').$type<{ ok: boolean; latencyMs?: number; message?: string }>(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const importJobs = pgTable('import_jobs', {
+  id: text('id').primaryKey(),
+  connectionId: text('connection_id').references(() => matterhornConnections.id, { onDelete: 'set null' }),
+  status: text('status', { enum: ['queued', 'running', 'completed', 'failed'] }).default('queued').notNull(),
+  totalProducts: integer('total_products').default(0).notNull(),
+  importedCount: integer('imported_count').default(0).notNull(),
+  skippedCount: integer('skipped_count').default(0).notNull(),
+  failedCount: integer('failed_count').default(0).notNull(),
+  error: text('error'),
+  startedAt: timestamp('started_at'),
+  completedAt: timestamp('completed_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const importLogs = pgTable('import_logs', {
+  id: text('id').primaryKey(),
+  jobId: text('job_id').references(() => importJobs.id, { onDelete: 'cascade' }).notNull(),
+  level: text('level', { enum: ['info', 'warn', 'error'] }).default('info').notNull(),
+  message: text('message').notNull(),
+  details: jsonb('details').$type<Record<string, unknown>>(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
 // --- User Management & Security ---
 
 export const users = pgTable('users', {

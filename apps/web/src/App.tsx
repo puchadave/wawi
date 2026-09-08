@@ -3,6 +3,7 @@ import { clsx } from 'clsx';
 import { useUIStore } from './lib/store';
 import { ProductList } from './pages/ProductList';
 import { ProductDetail } from './pages/ProductDetail';
+import { MatterhornPage } from './pages/Matterhorn';
 import { Login } from './pages/Login';
 import { Admin } from './pages/Admin';
 import { isLoggedIn, getCurrentUser, logout } from './lib/auth';
@@ -65,6 +66,15 @@ function Layout() {
               )}
             >
               Produkte
+            </NavLink>
+            <NavLink
+              to="/matterhorn"
+              className={({ isActive }) => clsx(
+                'block p-3 rounded-lg transition-colors',
+                isActive ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+              )}
+            >
+              Matterhorn
             </NavLink>
             <NavLink
               to="/pricing"
@@ -151,6 +161,7 @@ export default function App() {
       <Route element={<RequireAuth><Layout /></RequireAuth>}>
         <Route index element={<ProductList />} />
         <Route path="product/:id" element={<ProductList />} />
+        <Route path="matterhorn" element={<MatterhornPage />} />
         <Route path="pricing" element={<div style={{ padding: '2rem' }}>Preisregeln werden erweitert.</div>} />
         <Route path="shipping" element={<div style={{ padding: '2rem' }}>Versand & Fracht werden erweitert.</div>} />
         <Route path="settings" element={<div style={{ padding: '2rem' }}>Einstellungen werden erweitert.</div>} />

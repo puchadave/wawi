@@ -164,3 +164,66 @@ export const importApi = {
     });
   },
 };
+
+export interface MatterhornConnection {
+  id: string;
+  name: string;
+  type: 'xml' | 'csv' | 'json' | 'api' | 'ftp' | 'sftp' | 'matterhorn';
+  endpoint: string | null;
+  auth: Record<string, string>;
+  mapping: Record<string, string>;
+  schedule: string | null;
+  isEnabled: boolean;
+  lastTestedAt: string | null;
+  lastTestResult: { ok: boolean; latencyMs?: number; message?: string } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ImportJob {
+  id: string;
+  connectionId: string | null;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  totalProducts: number;
+  importedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  error: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ImportLog {
+  id: string;
+  jobId: string;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+  details: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export const matterhornApi = {
+  listConnections: () => get<{ connections: MatterhornConnection[] }>('/admin/matterhorn/connections'),
+  getConnection: (id: string) => get<{ connection: MatterhornConnection }>(`/admin/matterhorn/connections/${id}`),
+  createConnection: (data: { name: string; type?: string; endpoint?: string | null; auth?: Record<string, string>; mapping?: Record<string, string>; schedule?: string | null; isEnabled?: boolean }) =>
+    post<{ connection: MatterhornConnection }>('/admin/matterhorn/connections', data),
+  updateConnection: (id: string, data: Partial<MatterhornConnection>) =>
+    patch<{ connection: MatterhornConnection }>(`/admin/matterhorn/connections/${id}`, data),
+  deleteConnection: (id: string) => api.delete(`/admin/matterhorn/connections/${id}`),
+  testConnection: (id: string) => post<{ result: { ok: boolean; latencyMs: number; message: string }; connectionId: string }>(`/admin/matterhorn/connections/${id}/test`),
+  importXml: (connectionId: string, file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return post<{ jobId: string; status: string; totalParsed: number; importedCount: number; failedCount: number }>(
+      `/admin/matterhorn/connections/${connectionId}/import`,
+      fd,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    );
+  },
+  listJobs: (params?: { connectionId?: string; limit?: number }) =>
+    get<{ jobs: ImportJob[] }>('/admin/matterhorn/jobs', { params }),
+  getJob: (id: string) => get<{ job: ImportJob; logs: ImportLog[] }>(`/admin/matterhorn/jobs/${id}`),
+  getJobLogs: (id: string) => get<{ logs: ImportLog[] }>(`/admin/matterhorn/jobs/${id}/logs`),
+};
