@@ -290,8 +290,8 @@ const server = http.createServer(async (req, res) => {
       return res.end(xml);
     }
 
-    // 3. Health & System-Metriken
-    if (p === '/api/health' && req.method === 'GET') {
+    // 3. Health & System-Metriken (swarm: /ready + /health + /api/health)
+    if ((p === '/api/health' || p === '/health' || p === '/ready') && req.method === 'GET') {
       const metrics = logger.getSystemMetrics();
       const prods = catalogMgr.loadProducts();
       const orders = orderMgr.loadOrders();

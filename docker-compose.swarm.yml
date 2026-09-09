@@ -40,6 +40,12 @@ services:
 
   wawi-middleware:
     image: puchadave/wawi-middleware:latest
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/ready || curl -sf http://127.0.0.1:8080/health || curl -sf http://127.0.0.1:8080/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
     environment:
       NODE_ENV: production
       PORT: 8080
