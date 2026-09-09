@@ -95,6 +95,7 @@ export interface Product {
   prices: Record<string, number>;
   aiData: ProductContent;
   manualData: ProductContent;
+  attributes: Record<string, unknown>;
   status: ProductStatus;
   isWhitelisted: boolean;
   createdAt: string;
@@ -160,6 +161,8 @@ export const productApi = {
   retrySync: (id: string) => post<{ status: 'queued'; id: string; attemptId: string; jobId: string }>(`/products/${id}/sync/retry`),
   bulkApprove: (ids: string[]) =>
     post<{ status: 'approved'; count: number }>('/products/bulk/approve', { ids }),
+  updateAttributes: (id: string, attributes: Record<string, unknown>) =>
+    patch<Product>(`/products/${id}/attributes`, { attributes }),
 };
 
 export const pricingApi = {
@@ -292,3 +295,19 @@ export const shopwareApi = {
   retry: (supplierProductId: string) =>
     post<{ status: string; supplierProductId: string; attemptId: string; jobId: string }>(`/admin/shopware/retry/${supplierProductId}`),
 };
+
+export interface AdminStats {
+  products: { total: number; byStatus: Record<string, number> };
+  variants: { total: number };
+  imports: { byStatus: Record<string, number>; matterhornConnections: number };
+  ai: { byStatus: Record<string, number>; providers: number };
+  sync: { failed: number; total: number; mappings: number };
+  integrations: { total: number };
+  queues: Record<string, unknown>;
+  generatedAt: string;
+}
+
+export const adminStatsApi = {
+  get: () => get<AdminStats>('/admin/stats'),
+};
+

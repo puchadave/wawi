@@ -1,6 +1,7 @@
 import { Navigate, NavLink, Outlet, Route, Routes } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { useUIStore } from './lib/store';
+import { Dashboard } from './pages/Dashboard';
 import { ProductList } from './pages/ProductList';
 import { ProductDetail } from './pages/ProductDetail';
 import { MatterhornPage } from './pages/Matterhorn';
@@ -60,6 +61,15 @@ function Layout() {
           </div>
 
           <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
+            <NavLink
+              to="/dashboard"
+              className={({ isActive }) => clsx(
+                'block p-3 rounded-lg transition-colors',
+                isActive ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+              )}
+            >
+              Dashboard
+            </NavLink>
             <NavLink
               to="/"
               end
@@ -189,6 +199,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route element={<RequireAuth><Layout /></RequireAuth>}>
+        <Route path="dashboard" element={<Dashboard />} />
         <Route index element={<ProductList />} />
         <Route path="product/:id" element={<ProductList />} />
         <Route path="matterhorn" element={<MatterhornPage />} />

@@ -23,6 +23,11 @@ const manualDataSchema = z.object({
   metaDescription: z.string().max(160).optional(),
 });
 
+const attributesSchema = z.record(z.string().regex(/^[a-zA-Z0-9_.-]{1,64}$/), z.unknown()).refine(
+  (v) => Object.keys(v).length <= 100,
+  { message: 'Zu viele Attribute (max 100)' },
+);
+
 async function updateStatus(id: string, status: 'reviewed' | 'approved' | 'rejected', userId?: string, ip?: string, userAgent?: string) {
   const updated = await db.update(products)
     .set({ status, updatedAt: new Date() })
@@ -159,6 +164,41 @@ export async function productRoutes(server: FastifyInstance) {
       success: true,
     });
 
+    return reply.send(updated[0]);
+  });
+
+  server.patch('/api/products/:id/attributes', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!/^[a-zA-Z0-9_-]+$/.test(id) || id.length > 100) {
+      return reply.status(400).send({ error: 'Invalid product ID format' });
+    }
+    const parsed = z.object({ attributes: attributesSchema }).safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid attributes', details: parsed.error.flatten() });
+    }
+    const existing = await db.select().from(products).where(eq(products.supplierProductId, id)).limit(1);
+    if (!existing.length) return reply.status(404).send({ error: 'Product not found' });
+    // Merge existing attributes with new (shallow merge, null removes key if value is null)
+    const current = (existing[0].attributes as Record<string, unknown>) ?? {};
+    const incoming = parsed.data.attributes as Record<string, unknown>;
+    const merged: Record<string, unknown> = { ...current };
+    for (const [k, v] of Object.entries(incoming)) {
+      if (v === null) delete merged[k];
+      else merged[k] = v;
+    }
+    const updated = await db.update(products)
+      .set({ attributes: merged, updatedAt: new Date() })
+      .where(eq(products.supplierProductId, id))
+      .returning();
+    await logAudit({
+      userId: (request as any).user?.sub,
+      action: 'product_attributes_update',
+      entity: 'product',
+      entityId: id,
+      ipAddress: request.ip,
+      userAgent: request.headers['user-agent']?.toString(),
+      success: true,
+    });
     return reply.send(updated[0]);
   });
 

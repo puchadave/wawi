@@ -28,6 +28,7 @@ export const products = pgTable('products', {
   prices: jsonb('prices').$type<Record<string, number>>().default({}).notNull(),
   aiData: jsonb('ai_data').$type<AiData>().default({}).notNull(),
   manualData: jsonb('manual_data').$type<AiData>().default({}).notNull(),
+  attributes: jsonb('attributes').$type<Record<string, unknown>>().default({}).notNull(),
   status: text('status', { enum: ['imported', 'reviewed', 'approved', 'synced', 'rejected'] }).default('imported').notNull(),
   isWhitelisted: boolean('is_whitelisted').default(false).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),

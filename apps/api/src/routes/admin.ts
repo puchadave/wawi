@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { db } from '../db.js';
-import { users, roles, permissions, userRoles, rolePermissions } from '../schema.js';
-import { eq, and, or } from 'drizzle-orm';
+import { users, roles, permissions, userRoles, rolePermissions, products, variants, importJobs, matterhornConnections, aiProcessingRuns, syncAttempts, shopwareMappings, integrations, aiProviders } from '../schema.js';
+import { eq, and, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { hashPassword } from '../auth/password.js';
@@ -365,6 +365,59 @@ export async function adminRoutes(server: FastifyInstance) {
       .where(and(eq(rolePermissions.roleId, roleId), eq(rolePermissions.permissionId, permissionId)));
 
     return reply.send({ message: 'Permission removed from role' });
+  });
+
+  // --- Stats / Dashboard ---
+  server.get('/api/admin/stats', {
+    preHandler: [authenticate, requirePermission('admin:read')],
+  }, async (request, reply) => {
+    const [
+      productsByStatus,
+      totalProducts,
+      variantsCount,
+      importJobsByStatus,
+      matterhornCount,
+      aiRunsByStatus,
+      syncFailed,
+      syncTotal,
+      mappingsCount,
+      integrationsCount,
+      providersCount,
+    ] = await Promise.all([
+      db.select({ status: products.status, count: sql<number>`count(*)::int` }).from(products).groupBy(products.status),
+      db.select({ count: sql<number>`count(*)::int` }).from(products).then(r => r[0]?.count ?? 0),
+      db.select({ count: sql<number>`count(*)::int` }).from(variants).then(r => r[0]?.count ?? 0),
+      db.select({ status: importJobs.status, count: sql<number>`count(*)::int` }).from(importJobs).groupBy(importJobs.status),
+      db.select({ count: sql<number>`count(*)::int` }).from(matterhornConnections).then(r => r[0]?.count ?? 0),
+      db.select({ status: aiProcessingRuns.status, count: sql<number>`count(*)::int` }).from(aiProcessingRuns).groupBy(aiProcessingRuns.status),
+      db.select({ count: sql<number>`count(*)::int` }).from(syncAttempts).where(eq(syncAttempts.status, 'failed')).then(r => r[0]?.count ?? 0),
+      db.select({ count: sql<number>`count(*)::int` }).from(syncAttempts).then(r => r[0]?.count ?? 0),
+      db.select({ count: sql<number>`count(*)::int` }).from(shopwareMappings).then(r => r[0]?.count ?? 0),
+      db.select({ count: sql<number>`count(*)::int` }).from(integrations).then(r => r[0]?.count ?? 0),
+      db.select({ count: sql<number>`count(*)::int` }).from(aiProviders).then(r => r[0]?.count ?? 0),
+    ]);
+
+    // Queue health (best-effort, no hard failure)
+    let queueHealth: Record<string, unknown> = {};
+    try {
+      const { syncQueue, mediaQueue } = await import('../queues.js');
+      const [syncCounts, mediaCounts] = await Promise.all([
+        syncQueue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed').catch(() => ({})),
+        mediaQueue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed').catch(() => ({})),
+      ]);
+      queueHealth = { sync: syncCounts, media: mediaCounts };
+    } catch { /* queues unavailable */ }
+
+    return reply.send({
+      products: { total: totalProducts, byStatus: Object.fromEntries(productsByStatus.map(r => [r.status, r.count])) },
+      variants: { total: variantsCount },
+      imports: { byStatus: Object.fromEntries(importJobsByStatus.map(r => [r.status, r.count])), matterhornConnections: matterhornCount },
+      ai: { byStatus: Object.fromEntries(aiRunsByStatus.map(r => [r.status, r.count])), providers: providersCount },
+      sync: { failed: syncFailed, total: syncTotal, mappings: mappingsCount },
+      integrations: { total: integrationsCount },
+      queues: queueHealth,
+      generatedAt: new Date().toISOString(),
+    });
   });
 
   // --- Audit logs ---

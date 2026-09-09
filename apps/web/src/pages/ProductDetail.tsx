@@ -12,8 +12,11 @@ interface ProductDetailProps {
 
 export function ProductDetail({ productId, onClose }: ProductDetailProps) {
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<'overview' | 'pricing' | 'images' | 'seo'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'pricing' | 'images' | 'seo' | 'attributes'>('overview');
   const [manualData, setManualData] = useState<ProductContent>({});
+  const [attributesDraft, setAttributesDraft] = useState<Record<string, string>>({});
+  const [newAttrKey, setNewAttrKey] = useState('');
+  const [newAttrValue, setNewAttrValue] = useState('');
   const [selectedRuleId, setSelectedRuleId] = useState('');
 
   const productQuery = useQuery({
@@ -31,6 +34,10 @@ export function ProductDetail({ productId, onClose }: ProductDetailProps) {
   useEffect(() => {
     if (productQuery.data) {
       setManualData(productQuery.data.manualData || {});
+      const attrs = (productQuery.data as unknown as { attributes?: Record<string, unknown> }).attributes || {};
+      const asStrings: Record<string, string> = {};
+      for (const [k, v] of Object.entries(attrs)) asStrings[k] = String(v ?? '');
+      setAttributesDraft(asStrings);
     }
   }, [productQuery.data]);
 
@@ -39,6 +46,21 @@ export function ProductDetail({ productId, onClose }: ProductDetailProps) {
       setSelectedRuleId(rulesQuery.data[0].id);
     }
   }, [rulesQuery.data, selectedRuleId]);
+
+  const attributesMutation = useMutation({
+    mutationFn: () => {
+      const payload: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(attributesDraft)) payload[k.trim()] = v;
+      // include deletions: keys removed from draft vs server are sent as null
+      const serverAttrs = ((productQuery.data as unknown as { attributes?: Record<string, unknown> })?.attributes || {}) as Record<string, unknown>;
+      for (const k of Object.keys(serverAttrs)) if (!(k in attributesDraft)) payload[k] = null;
+      return productApi.updateAttributes(productId, payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['product', productId] });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+    },
+  });
 
   const priceQuery = useQuery({
     queryKey: ['price-preview', productId, selectedRuleId, priceEUR],
@@ -133,9 +155,9 @@ export function ProductDetail({ productId, onClose }: ProductDetailProps) {
       })()}
 
       <nav className="bg-white border-b border-gray-200 px-6 flex gap-6">
-        {(['overview', 'pricing', 'images', 'seo'] as const).map((tab) => (
+        {(['overview', 'pricing', 'images', 'seo', 'attributes'] as const).map((tab) => (
           <button key={tab} onClick={() => setActiveTab(tab)} className={clsx('py-3 border-b-2 text-sm font-medium', activeTab === tab ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500')}>
-            {{ overview: 'Übersicht', pricing: 'Preise', images: 'Bilder', seo: 'SEO' }[tab]}
+            {{ overview: 'Übersicht', pricing: 'Preise', images: 'Bilder', seo: 'SEO', attributes: 'Attribute' }[tab]}
           </button>
         ))}
       </nav>
@@ -176,6 +198,59 @@ export function ProductDetail({ productId, onClose }: ProductDetailProps) {
             <TextArea label="Meta Description" value={manualData.metaDescription ?? product.aiData.metaDescription ?? ''} maxLength={160} rows={4} onChange={(value) => setManualData({ ...manualData, metaDescription: value })} />
           </div>
         )}
+        {activeTab === 'attributes' && (
+          <div className="space-y-4">
+            <h3 className="text-sm font-medium text-gray-900">Flexible Attribute (products.attributes)</h3>
+            <p className="text-xs text-gray-500">Key = 1–64 Zeichen [a-zA-Z0-9_.-], max 100 Eintraege. Leeren = null (Key wird entfernt). PATCH /api/products/:id/attributes (shallow merge).</p>
+            {Object.keys(attributesDraft).length === 0 ? (
+              <p className="text-sm text-gray-400">Keine Attribute vorhanden.</p>
+            ) : (
+              <div className="space-y-2">
+                {Object.entries(attributesDraft).map(([k, v]) => (
+                  <div key={k} className="flex gap-2 items-center">
+                    <span className="text-sm font-mono text-gray-700 w-40 truncate" title={k}>{k}</span>
+                    <input value={v} onChange={(e) => setAttributesDraft((prev) => ({ ...prev, [k]: e.target.value }))} className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm" placeholder="Wert" />
+                    <button onClick={() => setAttributesDraft((prev) => { const c = { ...prev }; delete c[k]; return c; })} className="text-xs text-red-600 hover:text-red-700 px-2">Entfernen</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2 items-end pt-2 border-t border-gray-100">
+              <div className="flex-1">
+                <label className="text-xs text-gray-600">Neuer Key</label>
+                <input value={newAttrKey} onChange={(e) => setNewAttrKey(e.target.value)} placeholder="z.B. material" className="w-full border border-gray-300 rounded px-2 py-1 text-sm font-mono" />
+              </div>
+              <div className="flex-1">
+                <label className="text-xs text-gray-600">Wert</label>
+                <input value={newAttrValue} onChange={(e) => setNewAttrValue(e.target.value)} placeholder="z.B. Edelstahl" className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
+              </div>
+              <button
+                onClick={() => {
+                  const key = newAttrKey.trim();
+                  if (!key || !/^[a-zA-Z0-9_.-]{1,64}$/.test(key)) return;
+                  if (Object.keys(attributesDraft).length >= 100) return;
+                  setAttributesDraft((prev) => ({ ...prev, [key]: newAttrValue }));
+                  setNewAttrKey(''); setNewAttrValue('');
+                }}
+                className="px-3 py-1.5 bg-white border border-gray-300 rounded text-sm hover:bg-gray-50"
+              >
+                Hinzufügen
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => attributesMutation.mutate()} disabled={attributesMutation.isPending} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white rounded text-sm disabled:opacity-50">
+                <Save className="w-4 h-4" /> {attributesMutation.isPending ? 'Speichert…' : 'Attribute speichern'}
+              </button>
+              {attributesMutation.isSuccess && <span className="text-xs text-green-600 self-center">Gespeichert.</span>}
+              {attributesMutation.isError && <span className="text-xs text-red-600 self-center">{(attributesMutation.error as Error).message}</span>}
+            </div>
+            <details className="text-xs">
+              <summary className="cursor-pointer text-gray-600">Roh-JSON (Debug)</summary>
+              <pre className="mt-1 bg-gray-50 border border-gray-200 rounded p-2 overflow-auto max-h-40">{JSON.stringify((productQuery.data as unknown as { attributes?: unknown })?.attributes ?? {}, null, 2)}</pre>
+            </details>
+          </div>
+        )}
+
       </div>
     </div>
   );
