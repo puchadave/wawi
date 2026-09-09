@@ -1,0 +1,37 @@
+# docker-compose.zerotier.yml — optionales Fallback-Mesh fuer WaWi Swarm
+# Nutzung nur zusammen mit Basis-Compose:
+#   ZEROTIER_NETWORK_ID=<id> sh deploy-cluster.sh swarm
+#   # intern: docker stack deploy -c docker-compose.swarm.yml -c docker-compose.zerotier.yml wawi
+#   ZEROTIER_NETWORK_ID=<id> docker compose -f docker-compose.yml -f docker-compose.zerotier.yml up -d
+#
+# Hinweis: Nur der zerotier-Service laeuft mit NET_ADMIN/cap + host-Device /dev/net/tun.
+# wawi-middleware bleibt im wawi-overlay — kein network_mode: host fuer die Middleware.
+# Ohne ZEROTIER_NETWORK_ID wird diese Datei ignoriert (deploy-cluster.sh prueft die Variable).
+
+services:
+  zerotier:
+    image: zerotier/zerotier:1.14.0
+    hostname: wawi-zerotier
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    devices:
+      - /dev/net/tun
+    volumes:
+      - zerotier_data:/var/lib/zerotier-one
+    environment:
+      ZEROTIER_NETWORK_ID: ${ZEROTIER_NETWORK_ID:-}
+    # Swarm: global auf jedem Node, damit Swarm auch bei externem Netz-Ausfall erreichbar bleibt
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    networks:
+      - wawi-overlay
+    command: >
+      sh -c "zerotier-one -d && sleep 3 && if [ -n \"$$ZEROTIER_NETWORK_ID\" ]; then zerotier-cli join $$ZEROTIER_NETWORK_ID || true; fi && tail -f /var/log/zt 2>/dev/null || tail -f /dev/null"
+
+volumes:
+  zerotier_data:
+    driver: local
