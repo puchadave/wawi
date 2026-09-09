@@ -397,16 +397,27 @@ export async function adminRoutes(server: FastifyInstance) {
       db.select({ count: sql<number>`count(*)::int` }).from(aiProviders).then(r => r[0]?.count ?? 0),
     ]);
 
-    // Queue health (best-effort, no hard failure)
+    // Queue health + latency (kontinuierliches Debugging — best-effort)
     let queueHealth: Record<string, unknown> = {};
+    let latency: { dbMs?: number; redisMs?: number } = {};
     try {
-      const { syncQueue, mediaQueue } = await import('../queues.js');
-      const [syncCounts, mediaCounts] = await Promise.all([
-        syncQueue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed').catch(() => ({})),
-        mediaQueue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed').catch(() => ({})),
+      const tDb = Date.now();
+      await db.execute(sql`SELECT 1`);
+      latency.dbMs = Date.now() - tDb;
+    } catch { latency.dbMs = undefined; }
+    try {
+      const { redisConnection: rc, syncQueue: sq, mediaQueue: mq, stockQueue: stq, priceQueue: pq } = await import('../queues.js');
+      const tR = Date.now();
+      await rc.ping();
+      latency.redisMs = Date.now() - tR;
+      const [syncCounts, mediaCounts, stockCounts, priceCounts] = await Promise.all([
+        sq.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed').catch(() => ({})),
+        mq.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed').catch(() => ({})),
+        stq.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed').catch(() => ({})),
+        pq.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed').catch(() => ({})),
       ]);
-      queueHealth = { sync: syncCounts, media: mediaCounts };
-    } catch { /* queues unavailable */ }
+      queueHealth = { sync: syncCounts, media: mediaCounts, stock: stockCounts, price: priceCounts };
+    } catch { /* queues/redis unavailable */ }
 
     return reply.send({
       products: { total: totalProducts, byStatus: Object.fromEntries(productsByStatus.map(r => [r.status, r.count])) },
@@ -416,7 +427,47 @@ export async function adminRoutes(server: FastifyInstance) {
       sync: { failed: syncFailed, total: syncTotal, mappings: mappingsCount },
       integrations: { total: integrationsCount },
       queues: queueHealth,
+      latency,
       generatedAt: new Date().toISOString(),
+    });
+  });
+
+  // --- Detailed health (auth, admin:read) — fuer Dashboard + Runbook ---
+  server.get('/api/admin/health', {
+    preHandler: [authenticate, requirePermission('admin:read')],
+  }, async (_req, reply) => {
+    const started = Date.now();
+    let dbStatus: 'connected' | 'disconnected' = 'disconnected';
+    let redisStatus: 'connected' | 'disconnected' = 'disconnected';
+    let dbMs: number | undefined;
+    let redisMs: number | undefined;
+    let queues: Record<string, unknown> = {};
+    const tDb0 = Date.now();
+    try { await db.execute(sql`SELECT 1`); dbStatus = 'connected'; dbMs = Date.now() - tDb0; } catch (e) { dbMs = Date.now() - tDb0; }
+    const tR0 = Date.now();
+    try {
+      const { redisConnection: rc } = await import('../queues.js');
+      await rc.ping();
+      redisStatus = 'connected'; redisMs = Date.now() - tR0;
+    } catch { redisMs = Date.now() - tR0; }
+    try {
+      const { syncQueue: sq, mediaQueue: mq, stockQueue: stq, priceQueue: pq } = await import('../queues.js');
+      const [sync, media, stock, price] = await Promise.all([
+        sq.getJobCounts().catch(() => null),
+        mq.getJobCounts().catch(() => null),
+        stq.getJobCounts().catch(() => null),
+        pq.getJobCounts().catch(() => null),
+      ]);
+      queues = { sync, media, stock, price };
+    } catch { /* best-effort */ }
+    return reply.send({
+      status: dbStatus === 'connected' && redisStatus === 'connected' ? 'ok' : 'degraded',
+      db: dbStatus, redis: redisStatus, dbMs, redisMs, queues,
+      shopwareConfigured: Boolean(process.env.SHOPWARE_API_URL || process.env.SHOPWARE_BASE_URL),
+      uptimeSec: Math.round(process.uptime()),
+      version: process.env.npm_package_version || '0.7.0',
+      timestamp: new Date().toISOString(),
+      durationMs: Date.now() - started,
     });
   });
 
