@@ -29,6 +29,13 @@
       "when": 1788867648054,
       "tag": "0003_flimsy_micromacro",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788909816957,
+      "tag": "0004_narrow_champions",
+      "breakpoints": true
     }
   ]
 }

@@ -24,6 +24,8 @@ const DEFAULT_PERMISSIONS = [
   { name: 'admin:write', description: 'Benutzerrollen verwalten', category: 'Administration' },
   { name: 'shipping:read', description: 'Versandkosten anzeigen', category: 'Versand' },
   { name: 'shipping:write', description: 'Versandkosten bearbeiten', category: 'Versand' },
+  { name: 'ai:read', description: 'KI-Konfiguration anzeigen', category: 'KI' },
+  { name: 'ai:write', description: 'KI-Konfiguration verwalten und Pipeline starten', category: 'KI' },
 ];
 
 const BOOTSTRAP_ADMIN_USERNAME = 'puchadev';

@@ -17,6 +17,7 @@ import { productRoutes } from './routes/products.js';
 import { authRoutes } from './routes/auth.js';
 import { adminRoutes } from './routes/admin.js';
 import { matterhornRoutes } from './routes/matterhorn.js';
+import { aiRoutes } from './routes/ai.js';
 import { bootstrapAdmin } from './auth/bootstrap.js';
 import { stockQueue, priceQueue, syncQueue, mediaQueue, feeQueue, syncWorker, mediaWorker, feeWorker } from './queues.js';
 
@@ -97,6 +98,7 @@ await server.register(adminRoutes);
 await server.register(pricingRoutes);
 await server.register(productRoutes);
 await server.register(matterhornRoutes);
+await server.register(aiRoutes);
 
 server.get('/health', async () => {
   try {

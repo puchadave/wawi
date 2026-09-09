@@ -1,5 +1,20 @@
 import { pgTable, text, timestamp, integer, jsonb, decimal, boolean, uniqueIndex } from 'drizzle-orm/pg-core';
 
+/**
+ * KI-erzeugte Produktdaten. Die Pipeline schreibt NUR in diese Struktur;
+ * Quelldaten und manualData bleiben unangetastet.
+ */
+export type AiData = Partial<{
+  title: string;
+  description: string;
+  metaTitle: string;
+  metaDescription: string;
+  color: string;
+  type: string;
+  categoryPath: string;
+  categoryId: string;
+}>;
+
 export const products = pgTable('products', {
   supplierProductId: text('supplier_product_id').primaryKey(),
   name: text('name').notNull(),
@@ -11,8 +26,8 @@ export const products = pgTable('products', {
   descriptionHtml: text('description_html'),
   images: jsonb('images').$type<string[]>().default([]).notNull(),
   prices: jsonb('prices').$type<Record<string, number>>().default({}).notNull(),
-  aiData: jsonb('ai_data').$type<Partial<{ title: string; description: string; metaTitle: string; metaDescription: string }>>().default({}).notNull(),
-  manualData: jsonb('manual_data').$type<Partial<{ title: string; description: string; metaTitle: string; metaDescription: string }>>().default({}).notNull(),
+  aiData: jsonb('ai_data').$type<AiData>().default({}).notNull(),
+  manualData: jsonb('manual_data').$type<AiData>().default({}).notNull(),
   status: text('status', { enum: ['imported', 'reviewed', 'approved', 'synced', 'rejected'] }).default('imported').notNull(),
   isWhitelisted: boolean('is_whitelisted').default(false).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -37,6 +52,68 @@ export const shopwareMappings = pgTable('shopware_mappings', {
   entityType: text('entity_type', { enum: ['product', 'variant', 'category', 'property', 'media'] }).notNull(),
   syncedAt: timestamp('synced_at').defaultNow().notNull(),
 });
+
+export const aiProviders = pgTable('ai_providers', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  type: text('type', { enum: ['openai', 'anthropic', 'openai-compatible'] }).notNull(),
+  endpoint: text('endpoint'),
+  /** Name der Umgebungsvariable, die den API-Key enthaelt (Secret bleibt in ENV, nie in DB) */
+  apiKeyEnvVar: text('api_key_env_var'),
+  authSecretId: text('auth_secret_id'), // references integrations.schema.id (Commit 3)
+  isEnabled: boolean('is_enabled').default(false).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const aiModels = pgTable('ai_models', {
+  id: text('id').primaryKey(),
+  providerId: text('provider_id').references(() => aiProviders.id),
+  modelName: text('model_name').notNull(),
+  config: jsonb('config').$type<Record<string, unknown>>().default({}).notNull(),
+  isEnabled: boolean('is_enabled').default(false).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const aiPrompts = pgTable('ai_prompts', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  version: text('version').notNull(),
+  template: text('template').notNull(),
+  contextVariables: jsonb('context_variables').$type<string[]>().default(['title', 'brand', 'description', 'categoryPath', 'images']).notNull(),
+  isEnabled: boolean('is_enabled').default(true).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const aiProcessingRuns = pgTable('ai_processing_runs', {
+  id: text('id').primaryKey(),
+  productId: text('product_id').references(() => products.supplierProductId, { onDelete: 'cascade' }),
+  modelId: text('model_id').references(() => aiModels.id),
+  promptId: text('prompt_id').references(() => aiPrompts.id),
+  runName: text('run_name').notNull(),
+  /** Traceability: originalValue → modifiedValue pro Feld (processor, model, promptVersion, timestamp) */
+  changes: jsonb('changes').$type<AiProcessingChange[]>().default([]).notNull(),
+  inputSnapshot: jsonb('input_snapshot').$type<Record<string, unknown>>().notNull(),
+  outputSnapshot: jsonb('output_snapshot').$type<AiData>().notNull(),
+  status: text('status', { enum: ['processing', 'completed', 'failed'] }).notNull(),
+  error: text('error'),
+  startedAt: timestamp('started_at').defaultNow().notNull(),
+  completedAt: timestamp('completed_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export interface AiProcessingChange {
+  field: string;
+  originalValue: string | null;
+  modifiedValue: string | null;
+  processor: string;
+  model: string;
+  promptVersion: string;
+  timestamp: string;
+}
 
 export const syncHashes = pgTable('sync_hashes', {
   supplierProductId: text('supplier_product_id').primaryKey().references(() => products.supplierProductId, { onDelete: 'cascade' }),

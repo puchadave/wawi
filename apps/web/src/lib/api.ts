@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getAccessToken } from './auth';
 
 // In production the web UI and API are served behind the same nginx origin.
 // Using a relative URL avoids hard-coded localhost requests in the browser.
@@ -7,6 +8,22 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+});
+
+api.interceptors.request.use((config) => {
+  const token = getAccessToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+    const csrf = (() => {
+      try {
+        const raw = localStorage.getItem('wawi_auth');
+        if (!raw) return null;
+        return (JSON.parse(raw).tokens as { csrfToken?: string })?.csrfToken ?? null;
+      } catch { return null; }
+    })();
+    if (csrf) config.headers['x-csrf-token'] = csrf;
+  }
+  return config;
 });
 
 async function get<T>(url: string, config?: Parameters<typeof api.get>[1]): Promise<T> {
@@ -76,15 +93,15 @@ export interface Product {
   descriptionHtml: string | null;
   images: string[];
   prices: Record<string, number>;
+  aiData: ProductContent;
+  manualData: ProductContent;
   status: ProductStatus;
   isWhitelisted: boolean;
   createdAt: string;
   updatedAt: string;
-  manualData: ProductContent;
-  aiData: ProductContent;
-  variants?: ProductVariant[];
-  syncAttempt?: SyncAttempt | null;
-  shopwareMapping?: ShopwareMapping | null;
+  variants: ProductVariant[];
+  shopwareMappings: ShopwareMapping[];
+  syncAttempts: SyncAttempt[];
 }
 
 export interface ProductListParams {
@@ -141,28 +158,18 @@ export const productApi = {
   review: (id: string) => post<{ status: 'reviewed'; id: string }>(`/products/${id}/review`),
   sync: (id: string) => post<{ status: 'queued'; id: string; attemptId: string; jobId: string }>(`/products/${id}/sync`),
   bulkApprove: (ids: string[]) =>
-    post<{ status: 'approved'; count: number }>('/products/bulk-approve', { ids }),
+    post<{ status: 'approved'; count: number }>('/products/bulk/approve', { ids }),
 };
 
 export const pricingApi = {
-  getRules: () => get<PriceRule[]>('/pricing/rules'),
-  createRule: (data: unknown) => post<PriceRule>('/pricing/rules', data),
-  updateRule: (id: string, data: unknown) => put<{ message: string; id: string }>(`/pricing/rules/${id}`, data),
-  calculate: (data: { supplierNet: number; dropshippingFeeNet?: number; freightAllocatedNet?: number; priceRuleId: string }) =>
-    post<PricingCalculationResult>('/pricing/calculate', data),
-  simulate: (priceRuleId: string) =>
-    post<{ message: string; affectedProductCount: number }>('/pricing/simulate', { priceRuleId }),
-  apply: (priceRuleId: string) => post<{ message: string }>('/pricing/apply', { priceRuleId }),
-};
-
-export const importApi = {
-  uploadWhitelist: (file: File) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    return post<{ message: string; importedCount: number }>('/import/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-  },
+  getRules: () => get<PriceRule[]>('/admin/pricing/rules'),
+  createRule: (data: Omit<PriceRule, 'id' | 'createdAt' | 'updatedAt'>) =>
+    post<PriceRule>('/admin/pricing/rules', data),
+  updateRule: (id: string, data: Partial<PriceRule>) =>
+    patch<PriceRule>(`/admin/pricing/rules/${id}`, data),
+  deleteRule: (id: string) => api.delete(`/admin/pricing/rules/${id}`),
+  calculate: (data: { supplierNet: number; priceRuleId: string; quantity?: number }) =>
+    post<PricingCalculationResult>('/admin/pricing/calculate', data),
 };
 
 export interface MatterhornConnection {
@@ -177,22 +184,20 @@ export interface MatterhornConnection {
   lastTestedAt: string | null;
   lastTestResult: { ok: boolean; latencyMs?: number; message?: string } | null;
   createdAt: string;
-  updatedAt: string;
 }
 
 export interface ImportJob {
   id: string;
   connectionId: string | null;
-  status: 'queued' | 'running' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  fileName: string | null;
   totalProducts: number;
   importedCount: number;
-  skippedCount: number;
   failedCount: number;
   error: string | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
-  updatedAt: string;
 }
 
 export interface ImportLog {
@@ -200,7 +205,6 @@ export interface ImportLog {
   jobId: string;
   level: 'info' | 'warn' | 'error';
   message: string;
-  details: Record<string, unknown> | null;
   createdAt: string;
 }
 
@@ -227,3 +231,5 @@ export const matterhornApi = {
   getJob: (id: string) => get<{ job: ImportJob; logs: ImportLog[] }>(`/admin/matterhorn/jobs/${id}`),
   getJobLogs: (id: string) => get<{ logs: ImportLog[] }>(`/admin/matterhorn/jobs/${id}/logs`),
 };
+
+export { api };

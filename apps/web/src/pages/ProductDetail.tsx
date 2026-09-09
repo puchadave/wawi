@@ -110,14 +110,18 @@ export function ProductDetail({ productId, onClose }: ProductDetailProps) {
         <button onClick={() => saveMutation.mutate(manualData)} disabled={saveMutation.isPending} className="action-button primary"><Save className="w-4 h-4" /> Speichern</button>
       </header>
 
-      {(product.syncAttempt || product.shopwareMapping || syncMutation.error) && (
-        <div className={clsx('sync-banner', product.syncAttempt?.status === 'failed' || syncMutation.error ? 'failed' : 'active')}>
-          <strong>Shopware:</strong>
-          <span>{syncMutation.isPending ? 'Wird eingeplant' : product.syncAttempt?.status || 'synchronisiert'}</span>
-          {product.shopwareMapping && <span>ID {product.shopwareMapping.shopwareUuid}</span>}
-          {(syncMutation.error || product.syncAttempt?.error) && <span>{syncMutation.error?.message || product.syncAttempt?.error}</span>}
-        </div>
-      )}
+      {((product.syncAttempts?.[0] || product.shopwareMappings?.[0] || syncMutation.error) as unknown as boolean) && (() => {
+        const recentSync = product.syncAttempts?.[0] ?? null;
+        const recentMapping = product.shopwareMappings?.[0] ?? null;
+        return (
+          <div className={clsx('sync-banner', recentSync?.status === 'failed' || !!syncMutation.error ? 'failed' : 'active')}>
+            <strong>Shopware:</strong>
+            <span>{syncMutation.isPending ? 'Wird eingeplant' : recentSync?.status || 'synchronisiert'}</span>
+            {recentMapping && <span>ID {recentMapping.shopwareUuid}</span>}
+            {(syncMutation.error || recentSync?.error) && <span>{(syncMutation.error as unknown as { message?: string })?.message || recentSync?.error}</span>}
+          </div>
+        );
+      })()}
 
       <nav className="bg-white border-b border-gray-200 px-6 flex gap-6">
         {(['overview', 'pricing', 'images', 'seo'] as const).map((tab) => (
