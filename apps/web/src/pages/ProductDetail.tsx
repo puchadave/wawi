@@ -74,6 +74,14 @@ export function ProductDetail({ productId, onClose }: ProductDetailProps) {
     },
   });
 
+  const retrySyncMutation = useMutation({
+    mutationFn: () => productApi.retrySync(productId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['product', productId] });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+    },
+  });
+
   if (productQuery.isLoading) {
     return <div className="h-full flex items-center justify-center"><div className="spinner" /></div>;
   }
@@ -107,6 +115,7 @@ export function ProductDetail({ productId, onClose }: ProductDetailProps) {
         <button onClick={() => statusMutation.mutate('reviewed')} disabled={statusMutation.isPending} className="action-button warning"><RotateCcw className="w-4 h-4" /> Review</button>
         <button onClick={() => statusMutation.mutate('approved')} disabled={statusMutation.isPending} className="action-button success"><CheckCircle className="w-4 h-4" /> Freigeben</button>
         <button onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending || (product.status !== 'approved' && product.status !== 'synced')} className="action-button sync"><Send className="w-4 h-4" /> Shopware Sync</button>
+        <button onClick={() => retrySyncMutation.mutate()} disabled={retrySyncMutation.isPending} className="action-button warning"><RotateCcw className="w-4 h-4" /> {retrySyncMutation.isPending ? 'Wiederhole...' : 'Retry Sync'}</button>
         <button onClick={() => saveMutation.mutate(manualData)} disabled={saveMutation.isPending} className="action-button primary"><Save className="w-4 h-4" /> Speichern</button>
       </header>
 

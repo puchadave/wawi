@@ -5,6 +5,8 @@ import { ProductList } from './pages/ProductList';
 import { ProductDetail } from './pages/ProductDetail';
 import { MatterhornPage } from './pages/Matterhorn';
 import { AdminAi } from './pages/AdminAi';
+import { IntegrationsPage } from './pages/Integrations';
+import { ShopwarePage } from './pages/Shopware';
 import { Login } from './pages/Login';
 import { Admin } from './pages/Admin';
 import { isLoggedIn, getCurrentUser, logout } from './lib/auth';
@@ -87,7 +89,25 @@ function Layout() {
               KI-Verwaltung
             </NavLink>
             <NavLink
-              to="/pricing"
+              to="/shopware"
+              className={({ isActive }) =>
+                `flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${isActive ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`
+              }
+              onClick={() => { if (window.innerWidth < 1024) toggleSidebar(); }}
+            >
+              Shopware
+            </NavLink>
+            <NavLink
+              to="/integrations"
+              className={({ isActive }) =>
+                `flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${isActive ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100'}`
+              }
+              onClick={() => { if (window.innerWidth < 1024) toggleSidebar(); }}
+            >
+              Integrationen
+            </NavLink>
+            <NavLink
+              to="/pricing" 
               className={({ isActive }) => clsx(
                 'block p-3 rounded-lg transition-colors',
                 isActive ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
@@ -173,6 +193,8 @@ export default function App() {
         <Route path="product/:id" element={<ProductList />} />
         <Route path="matterhorn" element={<MatterhornPage />} />
         <Route path="ai" element={<RequireAdmin><AdminAi /></RequireAdmin>} />
+        <Route path="shopware" element={<ShopwarePage />} />
+        <Route path="integrations" element={<RequireAdmin><IntegrationsPage /></RequireAdmin>} />
         <Route path="pricing" element={<div style={{ padding: '2rem' }}>Preisregeln werden erweitert.</div>} />
         <Route path="shipping" element={<div style={{ padding: '2rem' }}>Versand & Fracht werden erweitert.</div>} />
         <Route path="settings" element={<div style={{ padding: '2rem' }}>Einstellungen werden erweitert.</div>} />

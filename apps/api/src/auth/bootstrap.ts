@@ -26,6 +26,10 @@ const DEFAULT_PERMISSIONS = [
   { name: 'shipping:write', description: 'Versandkosten bearbeiten', category: 'Versand' },
   { name: 'ai:read', description: 'KI-Konfiguration anzeigen', category: 'KI' },
   { name: 'ai:write', description: 'KI-Konfiguration verwalten und Pipeline starten', category: 'KI' },
+  { name: 'integrations:read', description: 'Integrationen anzeigen', category: 'Integrationen' },
+  { name: 'integrations:write', description: 'Integrationen verwalten und testen', category: 'Integrationen' },
+  { name: 'shopware:read', description: 'Shopware Verbindungen und Mappings anzeigen', category: 'Shopware' },
+  { name: 'shopware:write', description: 'Shopware Synchronisation steuern', category: 'Shopware' },
 ];
 
 const BOOTSTRAP_ADMIN_USERNAME = 'puchadev';

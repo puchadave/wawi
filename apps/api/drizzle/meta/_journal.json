@@ -36,6 +36,13 @@
       "when": 1788909816957,
       "tag": "0004_narrow_champions",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788918469325,
+      "tag": "0005_condemned_blob",
+      "breakpoints": true
     }
   ]
 }

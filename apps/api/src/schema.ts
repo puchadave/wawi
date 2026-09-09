@@ -60,7 +60,7 @@ export const aiProviders = pgTable('ai_providers', {
   endpoint: text('endpoint'),
   /** Name der Umgebungsvariable, die den API-Key enthaelt (Secret bleibt in ENV, nie in DB) */
   apiKeyEnvVar: text('api_key_env_var'),
-  authSecretId: text('auth_secret_id'), // references integrations.schema.id (Commit 3)
+  authSecretId: text('auth_secret_id'), // references integrations.id
   isEnabled: boolean('is_enabled').default(false).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -176,6 +176,19 @@ export const importLogs = pgTable('import_logs', {
   message: text('message').notNull(),
   details: jsonb('details').$type<Record<string, unknown>>(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const integrations = pgTable('integrations', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  type: text('type', { enum: ['ai', 'matterhorn', 'shopware', 'marketplace', 'custom'] }).notNull(),
+  endpoint: text('endpoint'),
+  credentials: jsonb('credentials').$type<Record<string, string>>().default({}).notNull(),
+  isEnabled: boolean('is_enabled').default(true).notNull(),
+  lastTestedAt: timestamp('last_tested_at'),
+  lastTestResult: jsonb('last_test_result').$type<{ ok: boolean; latencyMs?: number; message?: string }>(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
 // --- User Management & Security ---

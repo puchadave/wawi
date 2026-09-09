@@ -215,6 +215,55 @@ export async function productRoutes(server: FastifyInstance) {
     }
   });
 
+
+  server.post('/api/products/:id/sync/retry', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!/^[a-zA-Z0-9_-]+$/.test(id) || id.length > 100) {
+      return reply.status(400).send({ error: 'Ungueltige ID' });
+    }
+    const product = await db.select({ id: products.supplierProductId, status: products.status })
+      .from(products)
+      .where(eq(products.supplierProductId, id))
+      .limit(1);
+    if (!product.length) return reply.status(404).send({ error: 'Product not found' });
+    const attempts = await db.select().from(syncAttempts)
+      .where(eq(syncAttempts.supplierProductId, id))
+      .orderBy(desc(syncAttempts.createdAt))
+      .limit(5);
+    const lastFailed = attempts.find(a => a.status === 'failed');
+    if (product[0].status !== 'approved' && product[0].status !== 'synced' && !lastFailed) {
+      return reply.status(409).send({ error: 'Product muss approved/synced sein oder einen fehlgeschlagenen Versuch haben' });
+    }
+    const attemptId = uuidv4();
+    await db.insert(syncAttempts).values({
+      id: attemptId,
+      supplierProductId: id,
+      status: 'queued',
+      updatedAt: new Date(),
+    });
+    try {
+      const job = await syncQueue.add('sync-product', { supplierProductId: id, attemptId }, { jobId: `product-${id}-${attemptId}` });
+      await db.update(syncAttempts)
+        .set({ jobId: String(job.id), updatedAt: new Date() })
+        .where(eq(syncAttempts.id, attemptId));
+      await logAudit({
+        userId: (request as any).user?.sub,
+        action: 'product_sync_retry_queued',
+        entity: 'product',
+        entityId: id,
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent']?.toString(),
+        success: true,
+      });
+      return reply.status(202).send({ status: 'queued', id, attemptId, jobId: job.id });
+    } catch (error: any) {
+      await db.update(syncAttempts)
+        .set({ status: 'failed', error: error instanceof Error ? error.message : String(error), completedAt: new Date(), updatedAt: new Date() })
+        .where(eq(syncAttempts.id, attemptId));
+      throw error;
+    }
+  });
+
   server.post('/api/products/:id/reject', async (request, reply) => {
     const { id } = request.params as { id: string };
     if (!await updateStatus(id, 'rejected', (request as any).user?.sub, request.ip, request.headers['user-agent']?.toString())) {

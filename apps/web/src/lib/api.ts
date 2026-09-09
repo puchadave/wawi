@@ -157,6 +157,7 @@ export const productApi = {
   reject: (id: string) => post<{ status: 'rejected'; id: string }>(`/products/${id}/reject`),
   review: (id: string) => post<{ status: 'reviewed'; id: string }>(`/products/${id}/review`),
   sync: (id: string) => post<{ status: 'queued'; id: string; attemptId: string; jobId: string }>(`/products/${id}/sync`),
+  retrySync: (id: string) => post<{ status: 'queued'; id: string; attemptId: string; jobId: string }>(`/products/${id}/sync/retry`),
   bulkApprove: (ids: string[]) =>
     post<{ status: 'approved'; count: number }>('/products/bulk/approve', { ids }),
 };
@@ -233,3 +234,61 @@ export const matterhornApi = {
 };
 
 export { api };
+
+export interface Integration {
+  id: string;
+  name: string;
+  type: 'ai' | 'matterhorn' | 'shopware' | 'marketplace' | 'custom';
+  endpoint: string | null;
+  credentials: Record<string, string>;
+  isEnabled: boolean;
+  lastTestedAt: string | null;
+  lastTestResult: { ok: boolean; latencyMs?: number; message?: string } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const integrationsApi = {
+  list: (type?: string) => get<{ integrations: Integration[] }>('/admin/integrations', { params: type ? { type } : {} }),
+  getById: (id: string) => get<{ integration: Integration }>(`/admin/integrations/${id}`),
+  create: (data: { name: string; type?: string; endpoint?: string | null; credentials?: Record<string, string>; isEnabled?: boolean }) =>
+    post<{ integration: Integration }>('/admin/integrations', data),
+  update: (id: string, data: Partial<{ name: string; type: string; endpoint: string | null; credentials: Record<string, string>; isEnabled: boolean }>) =>
+    patch<{ integration: Integration }>(`/admin/integrations/${id}`, data),
+  remove: (id: string) => api.delete(`/admin/integrations/${id}`),
+  test: (id: string, override?: { endpoint?: string; credentials?: Record<string, string> }) =>
+    post<{ result: { ok: boolean; latencyMs: number; message: string }; integration: Integration }>(`/admin/integrations/${id}/test`, override || {}),
+};
+
+export interface ShopwareMapping {
+  id: string;
+  supplierProductId: string;
+  supplierVariantId: string | null;
+  shopwareUuid: string;
+  entityType: string;
+  syncedAt: string;
+  productName?: string | null;
+}
+
+export interface SyncAttempt {
+  id: string;
+  supplierProductId: string;
+  jobId: string | null;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  error: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const shopwareApi = {
+  getStatus: () => get<{ envConfigured: boolean; integrations: Integration[]; queue: Record<string, number> | null; queueError: string | null; stats: { mappingsTotal: number; attemptsTotal: number; recentAttempts: SyncAttempt[] } }>('/admin/shopware/status'),
+  listMappings: (params?: { supplierProductId?: string; entityType?: string; limit?: number; offset?: number }) =>
+    get<{ mappings: ShopwareMapping[]; total: number; limit: number; offset: number }>('/admin/shopware/mappings', { params }),
+  listAttempts: (params?: { supplierProductId?: string; status?: string; limit?: number; offset?: number }) =>
+    get<{ attempts: SyncAttempt[]; total: number; limit: number; offset: number }>('/admin/shopware/attempts', { params }),
+  getQueue: () => get<{ counts: Record<string, number>; sample: { waiting: any[]; active: any[]; failed: any[] } }>('/admin/shopware/queue'),
+  retry: (supplierProductId: string) =>
+    post<{ status: string; supplierProductId: string; attemptId: string; jobId: string }>(`/admin/shopware/retry/${supplierProductId}`),
+};
